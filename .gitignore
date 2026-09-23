@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 data/app.db
+
+# generated code graph (rebuild with: graphify . --code-only)
+graphify-out/
