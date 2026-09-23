@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Price Drop Decision Tracker{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="/">📉 Price Drop Decision Tracker</a>
+        <div class="topbar-actions">
+            <form method="post" action="/settings/currency" class="currency-form">
+                <label for="cur" class="currency-label">Show prices in</label>
+                <select name="currency" id="cur" onchange="this.form.submit()">
+                    <option value="">As quoted</option>
+                    {% for c in fx_currencies %}
+                        <option value="{{ c }}" {{ 'selected' if current_display_currency() == c }}>{{ c }}</option>
+                    {% endfor %}
+                </select>
+                <input type="hidden" name="next_url" value="{{ request.url.path }}{{ '?' ~ request.url.query if request.url.query else '' }}">
+            </form>
+            <form method="post" action="/refresh">
+                <button type="submit" class="btn btn-secondary">Refresh All Now</button>
+            </form>
+        </div>
+    </header>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

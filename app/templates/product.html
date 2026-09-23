@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}{{ product.name }} — Price Drop Decision Tracker{% endblock %}
+{% block content %}
+
+<a href="/" class="back-link">← All products</a>
+
+<section class="card">
+    <div class="product-card-head">
+        <h2>{{ product.name }}</h2>
+        <span class="badge badge-{{ verdict.label|lower|replace('_', '-') }}">
+            {{ verdict.label|replace('_', ' ') }}
+        </span>
+    </div>
+
+    {% if comparison.cheapest and comparison.cheapest.comparable_price is not none %}
+        <div class="best-price">
+            <span class="amount">{{ comparison.comparison_currency or "" }} {{ "%.2f"|format(comparison.cheapest.comparable_price) }}</span>
+            <span class="at">cheapest right now, at {{ comparison.cheapest.retailer }}</span>
+        </div>
+        {% if comparison.converted and comparison.cheapest.currency != comparison.display_currency %}
+            <p class="hint">Charged as {{ comparison.cheapest.currency }} {{ "%.2f"|format(comparison.cheapest.price) }}</p>
+        {% endif %}
+        {% if comparison.savings %}
+            <p class="savings-note">
+                Save {{ comparison.comparison_currency or "" }} {{ "%.2f"|format(comparison.savings) }}
+                ({{ comparison.savings_pct }}%) versus {{ comparison.dearest.retailer }}
+            </p>
+        {% endif %}
+    {% endif %}
+
+    <p class="reason">{{ verdict.reason }}</p>
+
+    {% if product.target_price %}
+        <p class="hint">Your target price: {{ currency or "" }} {{ "%.2f"|format(product.target_price) }}</p>
+    {% endif %}
+
+    {% if comparison.mixed_currency and not comparison.converted %}
+        <p class="notice notice-warning">
+            These listings aren't all priced in the same currency, so only the
+            {{ original_currency }} ones are compared and charted. Pick a currency in
+            <strong>Show prices in</strong> (top right) to convert and compare them all.
+        </p>
+    {% endif %}
+    {% if comparison.converted %}
+        <p class="fx-note">
+            Converted to {{ comparison.display_currency }} at rates
+            {% set age = fx_rates_age_hours() %}
+            {% if age is not none %}{{ "%.0f"|format(age) }}h old{% else %}of unknown age{% endif %}.
+            Indicative only — excludes shipping, card FX fees and import charges.
+        </p>
+    {% endif %}
+
+    {% if verdict.stats and verdict.stats.current is defined %}
+    <div class="stats-row">
+        <div><span class="stat-label">Best now</span><span class="stat-value">{{ "%.2f"|format(verdict.stats.current) }}</span></div>
+        <div><span class="stat-label">Best ever</span><span class="stat-value">{{ "%.2f"|format(verdict.stats.min) }}</span></div>
+        <div><span class="stat-label">Worst</span><span class="stat-value">{{ "%.2f"|format(verdict.stats.max) }}</span></div>
+        <div><span class="stat-label">Avg</span><span class="stat-value">{{ "%.2f"|format(verdict.stats.avg) }}</span></div>
+        <div><span class="stat-label">Percentile</span><span class="stat-value">{{ verdict.stats.percentile }}%</span></div>
+        {% if verdict.stats.trend is defined %}
+        <div><span class="stat-label">Trend</span><span class="stat-value">{{ verdict.stats.trend }}</span></div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="actions">
+        <form method="post" action="/products/{{ product.id }}/refresh">
+            <button type="submit" class="btn btn-secondary">Refresh All Sources</button>
+        </form>
+        <form method="post" action="/products/{{ product.id }}/delete" onsubmit="return confirm('Stop tracking this product?');">
+            <button type="submit" class="btn btn-danger">Delete Product</button>
+        </form>
+    </div>
+</section>
+
+<section class="card">
+    <h3>Price by retailer</h3>
+    <table class="compare-table">
+        <thead>
+            <tr><th>Retailer</th><th>Price</th><th>Last checked</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for s in comparison.sources %}
+            <tr class="{{ 'is-cheapest' if s.is_cheapest else '' }}">
+                <td class="retailer-cell">
+                    <span class="retailer-dot" style="background: var(--series-{{ color_index.get(s.source_id, 0) + 1 }})"></span>
+                    {{ s.retailer }}
+                    {% if s.is_cheapest %}<span class="tag tag-cheapest">cheapest</span>{% endif %}
+                    <a class="source-url" href="{{ s.url }}" target="_blank" rel="noopener">{{ s.url|truncate(60) }}</a>
+                </td>
+                <td class="price-cell">
+                    {% if s.price is not none %}
+                        {% if s.display_price is not none and s.currency != comparison.display_currency %}
+                            {# Converted for comparison, original kept in view -- the original
+                               is what the shop actually charges. #}
+                            <span class="converted">{{ comparison.display_currency }} {{ "%.2f"|format(s.display_price) }}</span>
+                            <span class="original-price">{{ s.currency }} {{ "%.2f"|format(s.price) }} as quoted</span>
+                        {% else %}
+                            {{ s.currency or currency or "" }} {{ "%.2f"|format(s.price) }}
+                        {% endif %}
+                        {% if s.off_currency %}<span class="hint">(no rate — not compared)</span>{% endif %}
+                    {% else %}
+                        <span class="price-missing">—</span>
+                    {% endif %}
+                    {% if s.error %}<span class="error-text">{{ s.error }}</span>{% endif %}
+                </td>
+                <td class="hint">{{ s.fetched_at[:16]|replace("T", " ") if s.fetched_at else "never" }}</td>
+                <td>
+                    <form class="inline-form" method="post" action="/sources/{{ s.source_id }}/delete"
+                          onsubmit="return confirm('Remove this source?');">
+                        <button type="submit" class="btn-link">remove</button>
+                    </form>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <h3 style="margin-top: 24px; font-size: 0.95rem;">Add another shop for this product</h3>
+    <form method="post" action="/products/{{ product.id }}/sources" class="add-source-form">
+        <input type="url" name="url" placeholder="URL of the same product on another shop" required>
+        <input type="text" name="price_selector" placeholder="CSS selector (optional)">
+        <button type="submit" class="btn btn-primary">Add Source</button>
+    </form>
+</section>
+
+<section class="card">
+    <h3>Price history</h3>
+    {% if per_source_series %}
+        <canvas id="priceChart" height="110"></canvas>
+    {% else %}
+        <p class="hint">No successful price fetch yet.</p>
+    {% endif %}
+</section>
+
+<section class="card">
+    <h3>Raw snapshots</h3>
+    <table class="snapshot-table">
+        <thead><tr><th>Fetched at (UTC)</th><th>Retailer</th><th>Price</th><th>How</th><th>Error</th></tr></thead>
+        <tbody>
+        {% for s in snapshots[:50] %}
+            <tr>
+                <td>{{ s.fetched_at[:19]|replace("T", " ") }}</td>
+                <td>{{ s.retailer }}</td>
+                <td>{% if s.price is not none %}{{ s.currency or "" }} {{ "%.2f"|format(s.price) }}{% else %}—{% endif %}</td>
+                <td><span class="strategy-chip">{{ s.strategy or "" }}</span></td>
+                <td class="error-text">{{ s.error or "" }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+{% if per_source_series %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+    const rawSeries = {{ per_source_series|tojson }};
+    const css = getComputedStyle(document.documentElement);
+    const palette = [1, 2, 3, 4, 5, 6, 7, 8].map(i => css.getPropertyValue('--series-' + i).trim());
+    const muted = css.getPropertyValue('--text-muted').trim();
+    const gridline = css.getPropertyValue('--gridline').trim();
+
+    const datasets = rawSeries.map(s => ({
+        label: s.retailer,
+        data: s.labels.map((t, j) => ({ x: new Date(t).getTime(), y: s.prices[j] })),
+        borderColor: palette[s.color_index],
+        backgroundColor: palette[s.color_index],
+        borderWidth: 2,
+        pointRadius: 3,
+        pointHoverRadius: 6,
+        tension: 0.2,
+        fill: false,
+    }));
+
+    const fmtDate = ms => new Date(ms).toLocaleString(undefined,
+        { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+    new Chart(document.getElementById('priceChart'), {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true,
+            interaction: { mode: 'nearest', intersect: false },
+            plugins: {
+                // One series needs no legend -- the section title names it.
+                legend: { display: datasets.length > 1, labels: { color: muted, boxWidth: 12 } },
+                tooltip: {
+                    callbacks: {
+                        title: items => fmtDate(items[0].parsed.x),
+                        label: item => `${item.dataset.label}: {{ currency or "" }} ${item.parsed.y.toFixed(2)}`,
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    ticks: { color: muted, maxTicksLimit: 6, callback: fmtDate },
+                    grid: { color: gridline },
+                },
+                y: {
+                    ticks: { color: muted },
+                    grid: { color: gridline },
+                }
+            }
+        }
+    });
+</script>
+{% endif %}
+{% endblock %}

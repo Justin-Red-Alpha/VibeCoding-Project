@@ -1,0 +1,12 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+jinja2==3.1.4
+requests==2.32.3
+beautifulsoup4==4.12.3
+apscheduler==3.10.4
+python-multipart==0.0.9
+
+# Optional but strongly recommended: renders JavaScript-only shops.
+# Lazada will NOT work without it (its server HTML only carries the list price).
+#   pip install playwright && playwright install chromium
+# playwright==1.47.0

@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}{{ query or "Find deals" }} — Price Drop Decision Tracker{% endblock %}
+{% block content %}
+
+<a href="/" class="back-link">← All products</a>
+
+<section class="card">
+    <h2>Hunt for a deal</h2>
+    <p class="hint">
+        Each shop is searched on its own site, so results appear one shop at a time
+        while the rest are still loading. Then tick the listings that really are the
+        same product.
+    </p>
+    <form method="get" action="/discover" class="search-form">
+        <input type="text" name="q" value="{{ query }}" placeholder="e.g. Sony WH-1000XM5" required autofocus>
+        <button type="submit" class="btn btn-primary">Search</button>
+    </form>
+    {% if not browser_available %}
+        <p class="notice notice-warning">
+            Playwright isn't installed, so shops can't be searched directly — the app will
+            fall back to web search, which is slower and gets rate-limited.
+            Run <code>pip install playwright</code> then <code>playwright install chromium</code>.
+        </p>
+    {% endif %}
+</section>
+
+{% if query %}
+<section class="card" id="summary-card">
+    <h3>Best price found</h3>
+    <p class="hint" id="progress">
+        Searching {{ shops|length }} shop{{ "" if shops|length == 1 else "s" }}…
+        <span class="spinner" aria-hidden="true"></span>
+    </p>
+    <div id="summary" hidden>
+        <div class="best-price">
+            <span class="amount" id="best-amount"></span>
+            <span class="at" id="best-at"></span>
+        </div>
+        <p class="savings-note" id="savings" hidden></p>
+    </div>
+    <p class="notice notice-warning" id="stream-note" hidden></p>
+</section>
+
+<form method="post" action="/discover/track">
+<p class="hint" style="margin-bottom:14px;">
+    <strong>Tick the listings that are genuinely the same product.</strong>
+    Matching ranks them, but it can't reliably tell a product from its carrying case
+    or a newer model — so nothing is tracked until you confirm.
+</p>
+
+{% for shop in shops %}
+<section class="card shop-section" id="shop-{{ loop.index0 }}" data-domain="{{ shop.domain }}">
+    <h3 class="shop-heading">
+        {{ shop.retailer }}
+        <span class="shop-domain">{{ shop.domain }}</span>
+        <span class="shop-status" id="status-{{ shop.domain|replace('.', '-') }}">
+            <span class="spinner" aria-hidden="true"></span> searching…
+        </span>
+    </h3>
+    <table class="compare-table shop-table" hidden>
+        <thead><tr><th>Track</th><th>Match</th><th>Price</th></tr></thead>
+        <tbody id="rows-{{ shop.domain|replace('.', '-') }}"></tbody>
+    </table>
+</section>
+{% endfor %}
+
+<section class="card">
+    <h3>Track the ones you ticked</h3>
+    <div class="add-source-form">
+        <input type="text" name="name" value="{{ query }}" placeholder="Product name" required>
+        <input type="number" step="0.01" name="target_price" placeholder="Target price (optional)">
+        <button type="submit" class="btn btn-primary">Track These</button>
+    </div>
+    <p class="hint">
+        They become sources of one tracked product, re-checked automatically so you get a
+        BUY / WAIT verdict as the price moves.
+    </p>
+</section>
+</form>
+
+<script>
+(() => {
+    const stream = new EventSource("/discover/stream?q={{ query|urlencode }}");
+    const progress = document.getElementById("progress");
+    const note = document.getElementById("stream-note");
+    const rowsByIndex = new Map();
+    let shopsDone = 0;
+
+    const money = (amount, currency) => `${currency || ""} ${Number(amount).toFixed(2)}`.trim();
+    const domId = (domain) => domain.replace(/\./g, "-");
+
+    // Build a row. Everything shop-supplied goes in via textContent, never HTML.
+    function makeRow(row) {
+        const tr = document.createElement("tr");
+        tr.id = `row-${row.index}`;
+
+        const tick = document.createElement("td");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.name = "urls";
+        box.value = row.url;
+        box.id = `c${row.index}`;
+        box.checked = row.confidence === "high" && row.price != null;
+        tick.appendChild(box);
+
+        const info = document.createElement("td");
+        const title = document.createElement("label");
+        title.className = "candidate-title";
+        title.htmlFor = box.id;
+        title.textContent = row.title;
+        info.appendChild(title);
+
+        const conf = document.createElement("span");
+        conf.className = `conf conf-${row.confidence}`;
+        conf.textContent = `${row.confidence} match`;
+        info.appendChild(conf);
+
+        const flagBox = document.createElement("span");
+        flagBox.id = `flags-${row.index}`;
+        for (const text of row.flags || []) {
+            const tag = document.createElement("span");
+            tag.className = "flag";
+            tag.textContent = text;
+            flagBox.appendChild(tag);
+        }
+        info.appendChild(flagBox);
+
+        const link = document.createElement("a");
+        link.className = "source-url";
+        link.href = row.url;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.textContent = row.url.slice(0, 70);
+        info.appendChild(link);
+
+        const price = document.createElement("td");
+        price.className = "price-cell";
+        price.id = `price-${row.index}`;
+        tr.append(tick, info, price);
+        paintPrice(price, row);
+        return tr;
+    }
+
+    function paintPrice(cell, row) {
+        cell.textContent = "";
+        if (row.price == null) {
+            const dash = document.createElement("span");
+            dash.className = "price-missing";
+            dash.textContent = row.error ? "—" : "no price shown";
+            cell.appendChild(dash);
+            if (row.error) {
+                const err = document.createElement("span");
+                err.className = "error-text";
+                err.textContent = row.error;
+                cell.appendChild(err);
+            }
+            return;
+        }
+        if (row.display_price != null && row.currency !== row.display_currency) {
+            const main = document.createElement("span");
+            main.className = "converted";
+            main.textContent = money(row.display_price, row.display_currency);
+            const orig = document.createElement("span");
+            orig.className = "original-price";
+            orig.textContent = `${money(row.price, row.currency)} as quoted`;
+            cell.append(main, orig);
+        } else {
+            cell.textContent = money(row.price, row.currency);
+        }
+    }
+
+    stream.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+
+        if (msg.type === "note" || msg.type === "error") {
+            note.hidden = false;
+            note.textContent = msg.message;
+            if (msg.type === "error") { progress.textContent = "Search stopped."; stream.close(); }
+            return;
+        }
+
+        if (msg.type === "shop") {
+            shopsDone += 1;
+            const key = domId(msg.domain);
+            const status = document.getElementById(`status-${key}`);
+            const body = document.getElementById(`rows-${key}`);
+            if (body) {
+                for (const row of msg.rows) {
+                    const tr = makeRow(row);
+                    rowsByIndex.set(row.index, row);
+                    body.appendChild(tr);
+                }
+                if (msg.rows.length) body.closest("table").hidden = false;
+            }
+            if (status) {
+                status.textContent = msg.error
+                    ? msg.error
+                    : `${msg.rows.length} result${msg.rows.length === 1 ? "" : "s"}`;
+                status.className = msg.error ? "shop-status shop-status-error" : "shop-status";
+            }
+            progress.innerHTML =
+                `Searched ${shopsDone} of {{ shops|length }} shops…` +
+                (shopsDone < {{ shops|length }} ? ` <span class="spinner" aria-hidden="true"></span>` : "");
+            return;
+        }
+
+        if (msg.type === "price") {
+            const row = rowsByIndex.get(msg.index) || {};
+            Object.assign(row, msg);
+            const cell = document.getElementById(`price-${msg.index}`);
+            if (cell) paintPrice(cell, row);
+            const box = document.getElementById(`c${msg.index}`);
+            if (box && row.confidence === "high" && msg.price != null) box.checked = true;
+            return;
+        }
+
+        if (msg.type === "done") {
+            stream.close();
+            progress.textContent = `${msg.priced} listing${msg.priced === 1 ? "" : "s"} priced.`;
+
+            for (const [index, flags] of Object.entries(msg.flags || {})) {
+                const holder = document.getElementById(`flags-${index}`);
+                if (!holder) continue;
+                for (const text of flags) {
+                    if ([...holder.children].some(el => el.textContent === text)) continue;
+                    const tag = document.createElement("span");
+                    tag.className = "flag";
+                    tag.textContent = text;
+                    holder.appendChild(tag);
+                }
+            }
+
+            if (msg.mixed_currency) {
+                note.hidden = false;
+                note.textContent = "Results came back in different currencies, so they can't be " +
+                    "ranked together. Pick a currency in “Show prices in” (top right).";
+            }
+
+            if (msg.best_price != null) {
+                document.getElementById("summary").hidden = false;
+                document.getElementById("best-amount").textContent = money(msg.best_price, msg.currency);
+                document.getElementById("best-at").textContent = `at ${msg.best_retailer}`;
+                const winner = document.getElementById(`row-${msg.cheapest_index}`);
+                if (winner) winner.classList.add("is-cheapest");
+                if (msg.savings) {
+                    const s = document.getElementById("savings");
+                    s.hidden = false;
+                    s.textContent = `Save ${money(msg.savings, msg.currency)} (${msg.savings_pct}%) ` +
+                        `versus the priciest match (${msg.dearest_retailer})`;
+                }
+            }
+        }
+    };
+
+    stream.onerror = () => {
+        stream.close();
+        if (shopsDone < {{ shops|length }}) {
+            progress.textContent = `Stopped after ${shopsDone} of {{ shops|length }} shops. Reload to retry.`;
+        }
+    };
+})();
+</script>
+{% endif %}
+{% endblock %}

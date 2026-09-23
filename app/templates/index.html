@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="card">
+    <h2>Hunt for a deal</h2>
+    <p class="hint">
+        Type what you're after and we'll search the shops, price up the matches and show
+        you where it's cheapest.
+    </p>
+    <form method="get" action="/discover" class="hero-search">
+        <input type="text" name="q" placeholder="e.g. Sony WH-1000XM5" required>
+        <button type="submit" class="btn btn-primary">Find Deals</button>
+    </form>
+
+    <p class="or-divider">or add a shop link yourself</p>
+
+    <p class="hint">
+        Paste any product page URL. Amazon, Lazada, Shopee, eBay and Qoo10 are recognised
+        automatically — you only need a CSS selector for shops we don't know yet.
+        Once it's added you can attach the same product on other shops to compare.
+    </p>
+    <form method="post" action="/products" class="form-grid">
+        <input type="text" name="name" placeholder="Name (e.g. Sony WH-1000XM5)" required>
+        <input type="url" name="url" placeholder="Product page URL" required>
+        <input type="text" name="price_selector" placeholder="CSS selector (optional)">
+        <input type="number" step="0.01" name="target_price" placeholder="Target price (optional)">
+        <button type="submit" class="btn btn-primary">Add & Check Price</button>
+    </form>
+    <p class="retailer-hint">
+        Recognised shops: {{ known_retailers|join(", ") }} — plus any site that publishes
+        schema.org price data or lets you point at the price with a selector.
+    </p>
+</section>
+
+<section>
+    <h2>Tracked products</h2>
+    {% if not views %}
+        <p class="hint">Nothing tracked yet — add a product above.</p>
+    {% endif %}
+    <div class="grid">
+        {% for v in views %}
+        <a class="card product-card" href="/product/{{ v.product.id }}">
+            <div class="product-card-head">
+                <h3>{{ v.product.name }}</h3>
+                <span class="badge badge-{{ v.verdict.label|lower|replace('_', '-') }}">
+                    {{ v.verdict.label|replace('_', ' ') }}
+                </span>
+            </div>
+
+            {% if v.comparison.cheapest and v.comparison.cheapest.comparable_price is not none %}
+                <div class="best-price">
+                    <span class="amount">{{ v.comparison.comparison_currency or "" }} {{ "%.2f"|format(v.comparison.cheapest.comparable_price) }}</span>
+                    <span class="at">at {{ v.comparison.cheapest.retailer }}</span>
+                </div>
+                {% if v.comparison.savings %}
+                    <p class="savings-note">
+                        Save {{ v.comparison.comparison_currency or "" }} {{ "%.2f"|format(v.comparison.savings) }}
+                        ({{ v.comparison.savings_pct }}%) vs {{ v.comparison.dearest.retailer }}
+                    </p>
+                {% endif %}
+            {% else %}
+                <p class="hint">No successful fetch yet</p>
+            {% endif %}
+
+            <p class="hint">
+                {{ v.num_sources }} source{{ "" if v.num_sources == 1 else "s" }}
+                {% if v.verdict.stats and v.verdict.stats.num_observations is defined %}
+                    · {{ v.verdict.stats.num_observations }} check{{ "" if v.verdict.stats.num_observations == 1 else "s" }}
+                {% endif %}
+            </p>
+            <p class="reason">{{ v.verdict.reason }}</p>
+        </a>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}
