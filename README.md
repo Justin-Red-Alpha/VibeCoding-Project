@@ -156,7 +156,8 @@ Two questions, deliberately separate ([app/analysis.py](app/analysis.py)):
 chosen, every listing is converted and they all compete; without one, only listings
 sharing the product's currency are ranked (comparing 4,000 PHP against 95 SGD by
 magnitude is meaningless). A currency with no available rate is shown but never
-declared cheapest.
+declared cheapest. Listings with no recognized currency are also shown but excluded
+from ranking.
 
 **Is now a good time to buy?** Computed on the *best price across shops over time*
 (snapshots bucketed hourly, minimum per bucket), since that's what you'd pay:
@@ -166,6 +167,11 @@ declared cheapest.
 - Price never varied → `NEUTRAL` (percentile is meaningless when all values tie)
 - Else by percentile of the current best price: bottom 25% → `BUY NOW`,
   top 25% → `WAIT`, middle → `NEUTRAL`
+
+The target is in the product's primary currency (the first successful source with a
+known currency). When you choose a display currency, the target is converted before
+it is compared with the converted price history. If that conversion is unavailable,
+the target is shown but does not affect the verdict.
 
 ## 6. Currency conversion
 
@@ -187,7 +193,7 @@ fall back to `frankfurter.app`, and are cached in SQLite — so the app keeps wo
 offline and tells you how old its rates are. A currency with no rate available is
 shown but never declared cheapest, rather than being silently mis-ranked.
 
-Converted history uses **today's** rate throughout, including for old snapshots.
+Converted price history and its chart use **today's** rate throughout, including for old snapshots.
 Within one currency that leaves the history's shape untouched; across currencies it
 means the series reflects today's rate, not the rate on the day each price was seen.
 

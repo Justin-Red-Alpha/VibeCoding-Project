@@ -26,6 +26,7 @@
         <input type="number" step="0.01" name="target_price" placeholder="Target price (optional)">
         <button type="submit" class="btn btn-primary">Add & Check Price</button>
     </form>
+    <p class="hint">A target uses the currency of the first listing that returns a currency.</p>
     <p class="retailer-hint">
         Recognised shops: {{ known_retailers|join(", ") }} — plus any site that publishes
         schema.org price data or lets you point at the price with a selector.

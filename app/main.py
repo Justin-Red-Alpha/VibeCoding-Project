@@ -100,7 +100,27 @@ def _product_view(product) -> dict:
         to_display=to_display, display_currency=shown_in,
     )
     series = best_price_series(snapshots, currency, to_display=to_display)
-    verdict = analyze(series, product["target_price"])
+
+    # Targets use the product's original comparison currency. The history may
+    # be converted to the user's display currency, so convert the target too;
+    # otherwise changing the display setting changes the BUY/WAIT decision.
+    target_currency = currency
+    target_price = product["target_price"]
+    target_for_analysis = None
+    target_display_price = None
+    target_not_applied = False
+    if target_price is not None:
+        if target_currency:
+            target_for_analysis = (
+                fx.convert(target_price, target_currency, shown_in)
+                if shown_in else target_price
+            )
+            if shown_in:
+                target_display_price = target_for_analysis
+        if target_for_analysis is None:
+            target_not_applied = True
+
+    verdict = analyze(series, target_for_analysis)
 
     return {
         "product": product,
@@ -108,7 +128,11 @@ def _product_view(product) -> dict:
         "comparison": comparison,
         "currency": comparison.comparison_currency or currency,
         "original_currency": currency,
+        "target_currency": target_currency,
+        "target_display_price": target_display_price,
+        "target_not_applied": target_not_applied,
         "display_currency": shown_in,
+        "history_currency": shown_in or currency,
         "series": series,
         "num_sources": len(sources),
     }
@@ -411,16 +435,30 @@ def product_detail(request: Request, product_id: int):
     seen_names: dict[str, int] = {}
     per_source_series = []
     for source in sources:
-        snaps = [s for s in db.get_snapshots(source["id"]) if s["price"] is not None]
-        if not snaps:
+        snapshots = [s for s in db.get_snapshots(source["id"]) if s["price"] is not None]
+        points = []
+        for snap in snapshots:
+            if view["display_currency"]:
+                price = fx.convert(
+                    snap["price"], snap["currency"], view["display_currency"]
+                )
+                if price is None:
+                    continue
+            else:
+                # Do not put unlike or unknown currencies on the same axis.
+                if not snap["currency"] or snap["currency"] != view["original_currency"]:
+                    continue
+                price = snap["price"]
+            points.append((snap["fetched_at"], price))
+        if not points:
             continue
         seen_names[source["retailer"]] = seen_names.get(source["retailer"], 0) + 1
         count = seen_names[source["retailer"]]
         per_source_series.append({
             "retailer": source["retailer"] if count == 1 else f"{source['retailer']} #{count}",
             "color_index": color_index[source["id"]],
-            "labels": [s["fetched_at"] for s in snaps],
-            "prices": [s["price"] for s in snaps],
+            "labels": [stamp for stamp, _ in points],
+            "prices": [price for _, price in points],
         })
 
     return templates.TemplateResponse(

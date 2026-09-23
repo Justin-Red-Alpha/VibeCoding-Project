@@ -32,13 +32,17 @@ class SourcePrice:
     error: str | None
     is_cheapest: bool = False
     off_currency: bool = False  # priced in something other than the product's main currency
+    currency_unknown: bool = False
+    ranking_eligible: bool = False
     # Same price expressed in the user's chosen display currency. The original
     # `price`/`currency` above is still what the shop would charge.
     display_price: float | None = None
 
     @property
     def comparable_price(self) -> float | None:
-        """What ranking should use: the converted figure when we have one."""
+        """A price only when its currency is known and comparable."""
+        if not self.ranking_eligible:
+            return None
         return self.display_price if self.display_price is not None else self.price
 
 
@@ -192,6 +196,7 @@ def best_price_series(snapshots, currency: str | None = None, to_display=None) -
     currencies it means the series reflects today's exchange rate, not the rate
     on the day each price was seen.
     """
+    comparison_currency = currency or dominant_currency(snapshots)
     buckets: dict[str, float] = defaultdict(lambda: float("inf"))
     for snap in snapshots:
         if snap["price"] is None:
@@ -203,8 +208,17 @@ def best_price_series(snapshots, currency: str | None = None, to_display=None) -
             if converted is None:
                 continue  # no rate for this currency; leave it out rather than guess
             value = converted
-        elif currency and snap["currency"] and snap["currency"] != currency:
-            continue
+        else:
+            # An unknown currency is not safe to compare with a target or with
+            # other listings. When no display currency is selected, keep only
+            # the product's known comparison currency.
+            snap_currency = snap["currency"]
+            if (
+                not snap_currency
+                or not comparison_currency
+                or snap_currency != comparison_currency
+            ):
+                continue
 
         try:
             bucket = datetime.fromisoformat(snap["fetched_at"]).strftime("%Y-%m-%dT%H")
@@ -227,7 +241,17 @@ def compare_sources(
     them can be ranked together. Without one, only listings sharing the product's
     own currency are ranked -- the rest are shown but marked as not comparable.
     """
-    comparison = Comparison(currency=currency)
+    latest_currencies = {
+        snap["currency"]
+        for snap in latest_by_source.values()
+        if snap and snap["price"] is not None and snap["currency"]
+    }
+    # Normally the product has a pinned currency. If it does not, a single
+    # shared currency among current listings is still safe to compare.
+    comparison_currency = currency or (
+        next(iter(latest_currencies)) if len(latest_currencies) == 1 else None
+    )
+    comparison = Comparison(currency=comparison_currency)
     seen_currencies = set()
 
     for source in sources:
@@ -238,10 +262,22 @@ def compare_sources(
             seen_currencies.add(snap_currency)
 
         converted = to_display(price, snap_currency) if to_display else None
-        # Only claim conversion happened where a rate was actually found.
+        currency_unknown = price is not None and not snap_currency
+        if price is None:
+            ranking_eligible = False
+        elif to_display is not None:
+            ranking_eligible = converted is not None
+        else:
+            ranking_eligible = bool(
+                snap_currency
+                and comparison_currency
+                and snap_currency == comparison_currency
+            )
+
+        # Keep unknown-currency prices distinct from known currencies that lack
+        # a conversion rate (or do not match the selected comparison currency).
         off_currency = bool(
-            price is not None and currency and snap_currency
-            and snap_currency != currency and converted is None
+            price is not None and snap_currency and not ranking_eligible
         )
 
         comparison.sources.append(
@@ -254,16 +290,18 @@ def compare_sources(
                 fetched_at=snap["fetched_at"] if snap else None,
                 error=snap["error"] if snap else None,
                 off_currency=off_currency,
+                currency_unknown=currency_unknown,
+                ranking_eligible=ranking_eligible,
                 display_price=converted,
             )
         )
 
     comparison.mixed_currency = len(seen_currencies) > 1
-    if to_display and any(s.display_price is not None for s in comparison.sources):
+    if to_display and any(s.ranking_eligible for s in comparison.sources):
         comparison.display_currency = display_currency
 
     comparable = [s for s in comparison.sources
-                  if s.comparable_price is not None and not s.off_currency]
+                  if s.comparable_price is not None]
     if comparable:
         comparison.cheapest = min(comparable, key=lambda s: s.comparable_price)
         comparison.cheapest.is_cheapest = True

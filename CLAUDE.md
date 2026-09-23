@@ -61,14 +61,20 @@ These each cost real debugging. Please don't undo them.
 4. **Never rank different currencies by magnitude.** 4,000 PHP is not cheaper than
    95 SGD. Without a display currency, off-currency sources are shown but excluded
    from ranking (`off_currency`); with one, they're converted first. A currency
-   with no available rate is shown but never declared cheapest.
+   with no available rate is shown but never declared cheapest. Prices with no
+   recognized currency are also shown but excluded from ranking and history.
 
-5. **Matching ranks, the user decides.** Accessories are capped at 0.30 (low
+5. **A target price and its history must use the same currency.** The target uses
+   the product's primary currency (the first successful source with a known
+   currency). Convert the target when analysis uses a selected display currency;
+   if the target cannot be converted, show it but do not apply it to the verdict.
+
+6. **Matching ranks, the user decides.** Accessories are capped at 0.30 (low
    confidence) because a $30 case next to $345 headphones fabricates a 91%
    "saving". Only high-confidence *and* priced candidates are pre-ticked. Nothing
    is tracked without a human tick.
 
-6. **The headline "best price" may only come from plausible listings.** Ranking
+7. **The headline "best price" may only come from plausible listings.** Ranking
    every result by price alone makes a cheaper *different* product the deal. Two
    real examples, both caught live: a WH-CH520 at SGD 17.69 headlined a search for
    WH-1000XM5 ("save 96%"), and an Amazon listing whose title matched perfectly but
@@ -78,7 +84,7 @@ These each cost real debugging. Please don't undo them.
    can't set the headline. Saying "probably not the same item" and "best price
    found" about one listing is a contradiction.
 
-7. **SQLite table rebuilds need both pragmas off.** See "Migration trap" below.
+8. **SQLite table rebuilds need both pragmas off.** See "Migration trap" below.
 
 ## Traps already hit (don't rediscover these)
 

@@ -30,15 +30,30 @@
 
     <p class="reason">{{ verdict.reason }}</p>
 
-    {% if product.target_price %}
-        <p class="hint">Your target price: {{ currency or "" }} {{ "%.2f"|format(product.target_price) }}</p>
+    {% if product.target_price is not none %}
+        <p class="hint">
+            Your target price: {{ target_currency or "currency unknown" }} {{ "%.2f"|format(product.target_price) }}
+            {% if target_display_price is not none and target_currency != display_currency %}
+                ({{ display_currency }} {{ "%.2f"|format(target_display_price) }} for this view)
+            {% endif %}
+        </p>
+        {% if target_not_applied %}
+            <p class="notice notice-warning">
+                The target is not used in the verdict because its currency cannot be compared with the price history yet.
+            </p>
+        {% endif %}
     {% endif %}
 
     {% if comparison.mixed_currency and not comparison.converted %}
         <p class="notice notice-warning">
-            These listings aren't all priced in the same currency, so only the
-            {{ original_currency }} ones are compared and charted. Pick a currency in
-            <strong>Show prices in</strong> (top right) to convert and compare them all.
+            {% if display_currency %}
+                Some listings could not be converted to {{ display_currency }}, so they are
+                shown but excluded from comparison and the chart.
+            {% else %}
+                These listings aren't all priced in the same currency, so only the
+                {{ original_currency }} ones are compared and charted. Pick a currency in
+                <strong>Show prices in</strong> (top right) to convert and compare them all.
+            {% endif %}
         </p>
     {% endif %}
     {% if comparison.converted %}
@@ -96,9 +111,15 @@
                             <span class="converted">{{ comparison.display_currency }} {{ "%.2f"|format(s.display_price) }}</span>
                             <span class="original-price">{{ s.currency }} {{ "%.2f"|format(s.price) }} as quoted</span>
                         {% else %}
-                            {{ s.currency or currency or "" }} {{ "%.2f"|format(s.price) }}
+                            {{ s.currency or ("currency unknown" if s.currency_unknown else currency or "") }} {{ "%.2f"|format(s.price) }}
                         {% endif %}
-                        {% if s.off_currency %}<span class="hint">(no rate — not compared)</span>{% endif %}
+                        {% if s.currency_unknown %}
+                            <span class="hint">(currency unknown — not compared)</span>
+                        {% elif s.off_currency %}
+                            <span class="hint">
+                                ({% if display_currency %}no rate{% else %}different currency{% endif %} — not compared)
+                            </span>
+                        {% endif %}
                     {% else %}
                         <span class="price-missing">—</span>
                     {% endif %}
@@ -187,7 +208,7 @@
                 tooltip: {
                     callbacks: {
                         title: items => fmtDate(items[0].parsed.x),
-                        label: item => `${item.dataset.label}: {{ currency or "" }} ${item.parsed.y.toFixed(2)}`,
+                        label: item => `${item.dataset.label}: {{ history_currency or "" }} ${item.parsed.y.toFixed(2)}`,
                     }
                 }
             },
