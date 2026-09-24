@@ -10,6 +10,8 @@
 | source registry (port) | `lookup*` | `app/history.py:HISTORY_SOURCES` | built |
 | politeness | 4 s gap; 15 / 60 min pauses | `app/history.py:REQUEST_GAP_S` | built |
 | pause state | process-wide deadline | `app/history.py:_cooldown_until` | built |
+| admin pause (read each time) | `settings.history_paused` | `app/history.py:_paused` | built |
+| paused reason | text | `app/history.py:PAUSED_REASON` | built |
 | capture cap | 24 | `app/history.py:MAX_CAPTURES` | built |
 | plausibility band | ×3 around the median | `app/history.py:PLAUSIBLE_FACTOR` | built |
 | canonical URL rule | per shop | `app/adapters.py:canonical_path` | built |
@@ -39,6 +41,8 @@
 | 5. idempotent | `app/database.py:get_origin_refs` | `tests/test_history.py:test_backfill_source` |
 | 6. polite: gap, cap, stop, pause | `app/history.py:_back_off` | `tests/test_history.py:test_rate_limit_backoff` |
 | 6. one job per product | `app/scheduler.py:run_once` | `tests/test_history.py:test_scheduling` |
+| 7. admin pause stops queued and running lookups | `app/history.py:backfill_product` | `tests/test_history.py:test_admin_pause_stops_running_lookups` |
+| 7. …and a lookup mid-capture | `app/history.py:wayback_lookup` | `tests/test_history.py:test_admin_pause_stops_running_lookups` |
 | archived history drives the verdict | `app/analysis.py:best_price_series` | `tests/test_history.py:test_verdict_uses_archived_history` |
 
 ## Notes / divergences

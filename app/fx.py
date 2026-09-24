@@ -66,6 +66,16 @@ def refresh_rates(force: bool = False) -> bool:
     return True
 
 
+def fetch_fresh_rates() -> bool:
+    """Fetch now, whatever the cache's age. True only if NEW rates were saved; the
+    admin page must not say "refreshed" when it merely kept the cached ones."""
+    rates = _fetch_rates()
+    if not rates:
+        return False
+    db.save_fx_rates(BASE, rates)
+    return True
+
+
 def rates_age_hours() -> float | None:
     fetched_at = db.get_fx_fetched_at(BASE)
     if not fetched_at:

@@ -10,6 +10,7 @@
 | `owner?` | `products.user_id` | `app/database.py:get_products_for_user` | built |
 | cookie | `session`, 14 days, HttpOnly, SameSite=Lax | `app/auth.py:set_session_cookie` | built |
 | throttle state | username → failure times | `app/auth.py:_failures` | built |
+| guesses in flight | username → count, under `_throttle_lock` | `app/auth.py:_in_flight` | built |
 
 ## Morphisms (Trn / relations) → code
 | Morphism | Signature | Realising code | State |
@@ -30,6 +31,8 @@
 | promote / demote | `UserId × Role → ()` | `app/auth.py:change_role` | built |
 | disable / enable | `UserId × 𝔹 → ()` | `app/auth.py:set_disabled` | built |
 | delete | `UserId → ()` (cascades) | `app/auth.py:delete_account` | built |
+| guarded change (atomic) | `UserId × change → ()` | `app/database.py:guarded_user_change` | built |
+| guard errors → message | `LastAdmin ∨ NoSuchUser → AuthError` | `app/auth.py:_guarded` | built |
 | routes: register / login / logout | HTTP | `app/account.py:register` | built |
 | route: personal currency | `POST /settings/currency` | `app/account.py:set_display_currency` | built |
 | routes: admin users | `POST /admin/users/{id}/…` | `app/admin.py:set_role` | built |
@@ -41,11 +44,13 @@
 | Rule (ARCHITECTURE §6) | Enforced at | Tested at |
 | --- | --- | --- |
 | 1. first account is admin, claims unowned | `app/database.py:create_user` | `tests/test_auth.py:test_storage` |
-| 2. at least one enabled admin | `app/auth.py:_would_remove_last_admin` | `tests/test_auth.py:test_last_admin_guard` |
+| 2. at least one enabled admin | `app/database.py:guarded_user_change` | `tests/test_auth.py:test_last_admin_guard` |
+| 2. …even when two admins race | `app/database.py:guarded_user_change` | `tests/test_auth.py:test_review_admins_cannot_both_demote` |
 | 3. salted scrypt only | `app/auth.py:hash_password` | `tests/test_auth.py:test_passwords` |
 | 4. sessions hashed at rest; end on disable | `app/auth.py:start_session` | `tests/test_auth.py:test_sessions` |
 | 5. one failure message; dummy hash | `app/auth.py:authenticate` | `tests/test_auth.py:test_sign_in_and_throttle` |
 | 6. throttle | `app/auth.py:_recent_failures` | `tests/test_auth.py:test_sign_in_and_throttle` |
+| 6. …parallel guesses counted | `app/auth.py:authenticate` | `tests/test_auth.py:test_review_parallel_guessing_is_capped` |
 | 7. ownership on every product route | `app/auth.py:product_for` | `tests/test_auth.py:test_products_are_private` |
 | 8. local redirects only | `app/auth.py:local_path` | `tests/test_auth.py:test_account_routes` |
 | cross-site POST refused | `app/main.py:SameSitePostGuard` | `tests/test_auth.py:test_same_site_guard` |

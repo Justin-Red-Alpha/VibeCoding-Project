@@ -119,9 +119,19 @@ def _back_off(seconds: float, detail: str, clock) -> HistoryResult:
     return _unavailable(f"{detail}; pausing lookups for {int(seconds // 60)} minutes")
 
 
+PAUSED_REASON = "Archive lookups were paused by an admin, so this lookup stopped early."
+
+
+def _paused() -> bool:
+    from . import site_settings  # site_settings imports nothing from here; lazy anyway
+    return site_settings.history_paused()
+
+
 def wayback_lookup(source, adapter, get=requests.get, sleep=time.sleep,
-                   clock=time.monotonic) -> HistoryResult:
-    """Find this listing's archived copies and read a price from each."""
+                   clock=time.monotonic, paused=None) -> HistoryResult:
+    """Find this listing's archived copies and read a price from each.
+    `paused` (default: the admin's switch) is re-checked before every capture."""
+    paused = paused or _paused
     if adapter.needs_js:
         return HistoryResult("unsupported", reason=(
             f"Archived copies of {adapter.name} pages don't include the selling price "
@@ -164,6 +174,10 @@ def wayback_lookup(source, adapter, get=requests.get, sleep=time.sleep,
     failed = 0
     for timestamp, original in picks:
         sleep(REQUEST_GAP_S)
+        if paused():
+            # An admin paused lookups mid-run (often *because* the archive is
+            # rate-limiting us): stop now rather than finish 24 requests.
+            return HistoryResult("unavailable", reason=PAUSED_REASON)
         ref = CAPTURE_URL.format(timestamp=timestamp, original=original)
         try:
             resp = get(ref, headers=BROWSER_HEADERS, timeout=CAPTURE_TIMEOUT_S)
@@ -287,6 +301,8 @@ def backfill_product(product_id: int, only_unchecked: bool = False) -> None:
     archived prices" button passes False and re-checks everything.
     """
     for source in db.get_sources(product_id):
+        if _paused():
+            return  # paused while this job was queued or running: stop here
         if only_unchecked and source["history_checked_at"]:
             continue
         try:
@@ -297,9 +313,9 @@ def backfill_product(product_id: int, only_unchecked: bool = False) -> None:
 
 def schedule_backfill(product_id: int, only_unchecked: bool = True) -> None:
     """Run the lookup in the background: at most one per product at a time.
-    Does nothing while an admin has archive lookups paused."""
-    from . import site_settings
-    if site_settings.history_paused():
+    Does nothing while an admin has archive lookups paused (and a job already
+    queued or running re-checks the pause as it goes)."""
+    if _paused():
         return
     from .scheduler import run_once
     run_once(f"history-{product_id}", backfill_product, product_id, only_unchecked)

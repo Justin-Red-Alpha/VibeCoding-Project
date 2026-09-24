@@ -1,6 +1,8 @@
 """Background job that re-checks all tracked products every few hours (an admin
 setting, default 6), so the app makes fresh decisions without anyone clicking."""
 
+from datetime import datetime, timezone
+
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from . import site_settings
@@ -19,15 +21,35 @@ def start_scheduler() -> None:
         "interval",
         hours=site_settings.refresh_interval_hours(),
         id=REFRESH_JOB_ID,
+        max_instances=1,
     )
     _scheduler.start()
 
 
 def set_refresh_interval(hours: float) -> None:
-    """Apply a new interval to the live job, with no restart. Does nothing if the
-    scheduler was never started (tests, or before startup)."""
-    if _scheduler.get_job(REFRESH_JOB_ID) is not None:
-        _scheduler.reschedule_job(REFRESH_JOB_ID, trigger="interval", hours=hours)
+    """Apply a new interval to the live job, with no restart.
+
+    Only when it actually changed: rescheduling restarts the countdown, so doing it
+    on every settings save would keep pushing the next refresh further away.
+    Does nothing if the scheduler was never started (tests, or before startup).
+    """
+    job = _scheduler.get_job(REFRESH_JOB_ID)
+    if job is None:
+        return
+    current = getattr(job.trigger, "interval", None)
+    if current is not None and current.total_seconds() == hours * 3600:
+        return
+    _scheduler.reschedule_job(REFRESH_JOB_ID, trigger="interval", hours=hours)
+
+
+def refresh_all_now() -> None:
+    """Run the scheduled refresh now rather than as a second, parallel job. It's the
+    same job, so its max_instances=1 stops it overlapping a run already going."""
+    job = _scheduler.get_job(REFRESH_JOB_ID)
+    if job is not None:
+        job.modify(next_run_time=datetime.now(timezone.utc))
+    else:
+        run_once("refresh-all-now", refresh_all)  # scheduler not started (tests)
 
 
 def run_once(job_id: str, func, *args) -> None:

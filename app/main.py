@@ -23,6 +23,7 @@ from .templating import display_currency_for, templates
 from .browser import BrowserUnavailable
 from .analysis import analyze, best_price_series, compare_sources, dominant_currency, target_in
 from .refresh import refresh_product, refresh_products, refresh_source
+from . import scheduler
 from .scheduler import start_scheduler, stop_scheduler
 from .scraper import ScrapeError, fetch_price
 from .search import discover, flag_price_outliers
@@ -179,10 +180,11 @@ def _product_view(product, user=None) -> dict:
 
 
 @app.get("/")
-def dashboard(request: Request, user=Depends(auth.require_user)):
+def dashboard(request: Request, refreshing: str = "", user=Depends(auth.require_user)):
     """Only the signed-in user's own products (admins included)."""
     views = [_product_view(p, user) for p in db.get_products_for_user(user["id"])]
-    return templates.TemplateResponse("index.html", {"request": request, "views": views})
+    return templates.TemplateResponse("index.html", {
+        "request": request, "views": views, "refreshing": refreshing == "1"})
 
 
 @app.get("/discover")
@@ -495,10 +497,16 @@ def refresh_one(product_id: int, user=Depends(auth.require_user)):
 
 @app.post("/refresh")
 def refresh_mine(user=Depends(auth.require_user)):
-    """The top bar's "Refresh my prices": the signed-in user's products only. An
-    admin refreshes everyone's from the admin page."""
-    refresh_products([p["id"] for p in db.get_products_for_user(user["id"])])
-    return RedirectResponse(url="/", status_code=HTTP_303_SEE_OTHER)
+    """"Refresh my prices": the signed-in user's products only, in the background.
+
+    One job per user: a second click while it's queued or running does nothing.
+    It also takes turns with any other batch refresh (refresh._batch_lock), so the
+    shops never see two refresh loops at once. An admin refreshes everyone's from
+    the admin page.
+    """
+    product_ids = [p["id"] for p in db.get_products_for_user(user["id"])]
+    scheduler.run_once(f"refresh-user-{user['id']}", refresh_products, product_ids)
+    return RedirectResponse(url="/?refreshing=1", status_code=HTTP_303_SEE_OTHER)
 
 
 def _chart_points(snapshots, shown_in: str | None, primary_currency: str | None, convert):

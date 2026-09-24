@@ -68,12 +68,16 @@
         </fieldset>
         {% for key, label in labels.items() %}
             <label>{{ label }}
-                <input type="number" name="{{ key }}" value="{{ numbers[key]|round(2)|string|replace('.0', '') }}"
-                       step="{{ '0.5' if key == 'refresh_interval_hours' else '1' }}" required>
+                <input type="number" name="{{ key }}" value="{{ numbers[key] }}"
+                       step="{{ 'any' if key == 'refresh_interval_hours' else '1' }}" required>
             </label>
         {% endfor %}
         <p class="hint">Refresh interval 1–168 hours · listings per shop 1–20 · price lookups per search 0–20.
-            Changes apply from the next search or refresh; no restart needed.</p>
+            Changes apply from the next search or refresh; no restart needed. A field you leave as it is
+            keeps following its environment variable or default.</p>
+        {% for problem in ignored_env %}
+            <p class="notice notice-warning">{{ problem }}</p>
+        {% endfor %}
         <button type="submit" class="btn btn-primary">Save settings</button>
     </form>
 </section>

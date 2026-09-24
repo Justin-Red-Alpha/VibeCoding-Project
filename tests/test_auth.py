@@ -36,6 +36,16 @@ def section(title):
 helpers.use_temp_db()
 
 
+def _no_network(*args, **kwargs):
+    raise AssertionError(f"test_auth tried to reach the network: {args[:2]}")
+
+
+# This suite is offline. Any HTTP call through requests (FX rates, shops, the
+# archive) fails loudly instead of quietly depending on the network.
+import requests as _requests
+_requests.Session.request = _no_network
+
+
 def fresh_db():
     if db.DB_PATH.exists():
         db.DB_PATH.unlink()
@@ -244,6 +254,14 @@ def test_last_admin_guard():
 
 # --- site settings ------------------------------------------------------------------
 
+def _refused(fn, *args) -> bool:
+    try:
+        fn(*args)
+        return False
+    except ValueError:
+        return True
+
+
 def test_site_settings():
     section("Site settings: DB, then env, then default; invalid values refused")
     import os
@@ -252,42 +270,23 @@ def test_site_settings():
     os.environ["REFRESH_INTERVAL_HOURS"] = "8"
     try:
         check("env fallback", site_settings.refresh_interval_hours(), 8.0)
-        site_settings.set_number("refresh_interval_hours", "12")
+        site_settings.save_number("refresh_interval_hours", site_settings.clean_number("refresh_interval_hours", "12"))
         check("admin value wins over env", site_settings.refresh_interval_hours(), 12.0)
     finally:
         del os.environ["REFRESH_INTERVAL_HOURS"]
     for key, bad in (("refresh_interval_hours", "0"), ("refresh_interval_hours", "abc"),
                      ("discover_per_shop", "21"), ("discover_per_shop", "2.5"),
                      ("discover_price_limit", "-1")):
-        try:
-            site_settings.set_number(key, bad)
-            refused = False
-        except ValueError:
-            refused = True
-        check(f"{key}={bad!r} refused", refused, True)
-    check("old value kept", site_settings.refresh_interval_hours(), 12.0)
-    site_settings.set_number("discover_price_limit", "0")
-    check("0 price lookups allowed", site_settings.discover_price_limit(), 0)
+        check(f"{key}={bad!r} refused", _refused(site_settings.clean_number, key, bad), True)
+    check("0 price lookups allowed", site_settings.clean_number("discover_price_limit", "0"), 0.0)
 
-    site_settings.set_search_domains(["amazon.sg", "lazada.com.my", "amazon.sg"])
-    check("known shops accepted, deduped", site_settings.search_domains(), ["amazon.sg", "lazada.com.my"])
-    for bad in (["evil.example"], []):
-        try:
-            site_settings.set_search_domains(bad)
-            refused = False
-        except ValueError:
-            refused = True
-        check(f"search domains {bad} refused", refused, True)
-    check("...old value kept", site_settings.search_domains(), ["amazon.sg", "lazada.com.my"])
+    check("known shops accepted, in list order",
+          site_settings.clean_search_domains(["lazada.sg", "amazon.sg", "amazon.sg"]), ["amazon.sg", "lazada.sg"])
+    for bad in (["evil.example"], [], ["amazon.evil.example"], ["amazon.sg,evil.example"]):
+        check(f"search domains {bad} refused", _refused(site_settings.clean_search_domains, bad), True)
 
-    try:
-        site_settings.set_default_currency("XYZ")
-        refused = False
-    except ValueError:
-        refused = True
-    check("unknown default currency refused", refused, True)
-    site_settings.set_default_currency("myr")
-    check("default currency set", site_settings.default_currency(), "MYR")
+    check("unknown default currency refused", _refused(site_settings.clean_currency, "XYZ"), True)
+    check("currency normalised", site_settings.clean_currency("myr"), "MYR")
 
 
 def test_settings_apply_without_restart():
@@ -296,7 +295,7 @@ def test_settings_apply_without_restart():
     from app.refresh import refresh_all
     from app.search.providers import search_domains
     fresh_db()
-    site_settings.set_search_domains(["amazon.sg"])
+    site_settings.save_search_domains(["amazon.sg"])
     check("search uses the new shops", search_domains(), ["amazon.sg"])
 
     site_settings.set_history_paused(True)
@@ -308,9 +307,15 @@ def test_settings_apply_without_restart():
 
     scheduler._scheduler.add_job(refresh_all, "interval", hours=6, id=scheduler.REFRESH_JOB_ID)
     try:
+        # The scheduler isn't started in tests, so jobs have no next_run_time yet; a
+        # reschedule (which restarts the countdown) shows up as a new trigger object.
+        before = scheduler._scheduler.get_job(scheduler.REFRESH_JOB_ID).trigger
+        scheduler.set_refresh_interval(6)
+        check_that("same interval: countdown not restarted",
+                   scheduler._scheduler.get_job(scheduler.REFRESH_JOB_ID).trigger is before)
         scheduler.set_refresh_interval(12)
         job = scheduler._scheduler.get_job(scheduler.REFRESH_JOB_ID)
-        check("refresh job rescheduled", job.trigger.interval, timedelta(hours=12))
+        check("new interval: job rescheduled", job.trigger.interval, timedelta(hours=12))
     finally:
         scheduler._scheduler.remove_all_jobs()
 
@@ -372,6 +377,8 @@ def test_account_routes():
     r = other.post("/login", data={"username": "owner", "password": "correct-horse",
                                    "next": "https://evil.example/"})
     check("foreign next ignored", r.headers["location"], "/")
+    # Fresh cached rates, so choosing a currency doesn't go and fetch new ones.
+    db.save_fx_rates("USD", {"USD": 1.0, "SGD": 1.28, "MYR": 4.09})
     r = other.post("/settings/currency", data={"currency": "MYR", "next_url": "//evil.example"})
     check("currency redirect stays local", r.headers["location"], "/")
     check("preference saved for this user", db.get_user_by_name("owner")["display_currency"], "MYR")
@@ -406,12 +413,9 @@ def test_same_site_guard():
 
 def test_products_are_private():
     section("Each user's products are theirs; admins can see all")
-    from app import main
+    from app import main, scheduler
     fresh_db()
     restore = _no_live_fetches()
-    refreshed = []
-    saved_refresh = main.refresh_products
-    main.refresh_products = lambda ids: refreshed.append(sorted(ids))
     try:
         owner = helpers.client("owner")
         alice = helpers.client("alice")
@@ -439,10 +443,17 @@ def test_products_are_private():
         check_that("...but it isn't on the admin's own dashboard", "Alice&#39;s headphones" not in owner.get("/").text)
 
         mine = _track(bob, "Bob's")
+        r = bob.post("/refresh")
+        check("'Refresh my prices' returns at once", r.headers["location"], "/?refreshing=1")
+        bob_id = db.get_user_by_name("bob")["id"]
+        job = scheduler._scheduler.get_job(f"refresh-user-{bob_id}")
+        check("...queued in the background, your products only", job and job.args, ([mine],))
         bob.post("/refresh")
-        check("'Refresh my prices' touches only your products", refreshed, [[mine]])
+        jobs = [j.id for j in scheduler._scheduler.get_jobs()]
+        check("...a second click doesn't start a second refresh", jobs.count(f"refresh-user-{bob_id}"), 1)
+        check_that("dashboard says it's refreshing", "Refreshing your prices in the background" in bob.get("/?refreshing=1").text)
     finally:
-        main.refresh_products = saved_refresh
+        scheduler._scheduler.remove_all_jobs()
         restore()
 
 
@@ -479,7 +490,7 @@ def test_currency_is_personal():
     from app import main
     fresh_db()
     db.save_fx_rates("USD", {"USD": 1.0, "SGD": 1.28, "MYR": 4.09})
-    site_settings.set_default_currency("SGD")
+    site_settings.save_default_currency("SGD")
     owner = helpers.client("owner")
     alice = helpers.client("alice")
     alice.post("/settings/currency", data={"currency": "MYR"})
@@ -558,14 +569,24 @@ def test_admin_page():
         check("refresh-all queued in the background",
               scheduler._scheduler.get_job("refresh-all-now") is not None, True)
         scheduler._scheduler.remove_all_jobs()
-        saved_fx = admin_routes.fx.refresh_rates
-        calls = []
-        admin_routes.fx.refresh_rates = lambda force=False: calls.append(force) or True
+        saved_fetch = admin_routes.fx._fetch_rates
         try:
-            owner.post("/admin/maintenance/fx")
+            admin_routes.fx._fetch_rates = lambda: {"USD": 1.0, "SGD": 1.3}
+            r = owner.post("/admin/maintenance/fx")
+            check("FX fetched: says refreshed", r.headers["location"], "/admin?notice=fx")
+            admin_routes.fx._fetch_rates = lambda: None  # both services down, cache present
+            r = owner.post("/admin/maintenance/fx")
+            check("FX failed with a cache: doesn't claim success", r.headers["location"],
+                  "/admin?notice=fx_failed_cached")
+            check_that("...and says so", "Still using the cached rates" in owner.get(r.headers["location"]).text)
+            conn = db.get_connection()
+            conn.execute("DELETE FROM fx_rates")
+            conn.commit()
+            conn.close()
+            r = owner.post("/admin/maintenance/fx")
+            check("FX failed, nothing cached", r.headers["location"], "/admin?notice=fx_failed_none")
         finally:
-            admin_routes.fx.refresh_rates = saved_fx
-        check("FX refresh forced", calls, [True])
+            admin_routes.fx._fetch_rates = saved_fetch
 
         owner.post("/admin/maintenance/history", data={"action": "pause"})
         check("archive lookups paused", site_settings.history_paused(), True)
@@ -585,6 +606,216 @@ from app import history as _history_module
 saved_backfill = _history_module.schedule_backfill
 
 
+# --- fixes from the code review (2026-09-24) --------------------------------------------
+
+def test_review_as_quoted_beats_site_default():
+    section("Review #1: 'As quoted' is a real choice, even with a site default")
+    from app import main
+    fresh_db()
+    db.save_fx_rates("USD", {"USD": 1.0, "SGD": 1.28, "MYR": 4.09})
+    site_settings.save_default_currency("SGD")
+    alice = helpers.client("alice")
+    alice_row = lambda: db.get_user_by_name("alice")
+    check("no choice yet: site default", main.display_currency(alice_row()), "SGD")
+    alice.post("/settings/currency", data={"currency": ""})
+    check("chose 'As quoted': stays as quoted", main.display_currency(alice_row()), None)
+    check_that("...and the picker shows it (no currency preselected)",
+               ' selected>' not in alice.get("/").text.split('name="currency"')[1].split("</select>")[0])
+    alice.post("/settings/currency", data={"currency": "XYZ"})
+    check("unknown code ignored, choice kept", main.display_currency(alice_row()), None)
+
+
+def test_review_settings_never_freeze_config():
+    section("Review #2-4: a save only stores what changed; a failed save stores nothing")
+    import os
+    from app.search import providers
+    fresh_db()
+    owner = helpers.client("owner")
+    os.environ["DISCOVER_PER_SHOP"] = "10"
+    try:
+        form = {"default_currency": "", "search_domains": site_settings.available_shops(),
+                "refresh_interval_hours": "0", "discover_per_shop": "10", "discover_price_limit": "6"}
+        owner.post("/admin/settings", data=form)
+        stored = {k: db.get_setting(k) for k in ("discover_per_shop", "refresh_interval_hours",
+                                                 "search_domains_off", "display_currency")}
+        check("failed save writes nothing at all", stored, dict.fromkeys(stored))
+        os.environ["DISCOVER_PER_SHOP"] = "12"
+        check("...so the env var still applies", site_settings.discover_per_shop(), 12)
+
+        form["refresh_interval_hours"] = "8"      # the only real change
+        form["discover_per_shop"] = "12"          # same as env: untouched
+        owner.post("/admin/settings", data=form)
+        check("valid save stores only the change",
+              (db.get_setting("refresh_interval_hours"), db.get_setting("discover_per_shop"),
+               db.get_setting("search_domains_off")), ("8", None, None))
+    finally:
+        del os.environ["DISCOVER_PER_SHOP"]
+
+    form["search_domains"] = ["amazon.sg", "lazada.sg"]
+    owner.post("/admin/settings", data=form)
+    check("shops are stored as the ones switched off",
+          sorted(db.get_setting("search_domains_off").split(",")), ["ebay.com.sg", "qoo10.sg", "shopee.sg"])
+    providers.DEFAULT_SEARCH_DOMAINS.append("newshop.sg")
+    try:
+        check("a shop added to the code later is searched without an admin",
+              "newshop.sg" in site_settings.search_domains(), True)
+    finally:
+        providers.DEFAULT_SEARCH_DOMAINS.remove("newshop.sg")
+
+    before = site_settings.search_domains()
+    owner.post("/admin/settings", data={**form, "search_domains": ["amazon.sg,evil.example"]})
+    check("injected domain refused, nothing changed", site_settings.search_domains(), before)
+
+
+def test_review_admin_numbers_render_exactly():
+    section("Review #5: the admin form shows numbers exactly")
+    fresh_db()
+    owner = helpers.client("owner")
+    for stored, shown in (("1.05", "1.05"), ("6", "6"), ("12.5", "12.5")):
+        db.set_setting("refresh_interval_hours", stored)
+        html = owner.get("/admin").text
+        check_that(f"stored {stored} is shown as {shown}",
+                   f'name="refresh_interval_hours" value="{shown}"' in html)
+    check_that("any interval step allowed (no browser block)", 'step="any"' in html)
+
+
+def test_review_ignored_env_is_reported():
+    section("Review #9: an unusable env value is reported, not silently dropped")
+    import os
+    fresh_db()
+    owner = helpers.client("owner")
+    os.environ["REFRESH_INTERVAL_HOURS"] = "0.5"
+    try:
+        check("falls back to the default", site_settings.refresh_interval_hours(), 6)
+        check_that("listed as ignored", any("REFRESH_INTERVAL_HOURS='0.5' is ignored" in p
+                                            for p in site_settings.ignored_env()))
+        check_that("shown on the admin page", "is ignored" in owner.get("/admin").text)
+    finally:
+        del os.environ["REFRESH_INTERVAL_HOURS"]
+
+
+def test_review_parallel_guessing_is_capped():
+    section("Review #10: parallel guesses can't get past the lock")
+    import threading
+    import time as _time
+    fresh_db()
+    auth.register("owner", "correct-horse")
+    checked = []
+    saved_verify = auth.verify_password
+
+    def slow_verify(password, encoded):
+        checked.append(1)
+        _time.sleep(0.05)  # the window the old code raced in
+        return False
+
+    auth.verify_password = slow_verify
+    try:
+        threads = [threading.Thread(target=lambda: _swallow(auth.authenticate, "owner", "guess"))
+                   for _ in range(40)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        auth.verify_password = saved_verify
+        auth._failures.clear()
+    check("40 parallel guesses: at most 5 were checked", len(checked) <= auth.LOCK_AFTER_FAILURES, True)
+
+
+def _swallow(fn, *args):
+    try:
+        fn(*args)
+    except Exception:
+        pass
+
+
+def test_review_admins_cannot_both_demote():
+    section("Review #11: two admins demoting each other still leaves one")
+    import threading
+    for _ in range(10):
+        fresh_db()
+        a = auth.register("owner", "correct-horse")
+        b = auth.register("bob", "correct-horse")
+        auth.change_role(b["id"], "admin")
+        barrier = threading.Barrier(2)
+
+        def demote(uid):
+            barrier.wait()
+            _swallow(auth.change_role, uid, "user")
+
+        threads = [threading.Thread(target=demote, args=(uid,)) for uid in (a["id"], b["id"])]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        if db.count_enabled_admins() < 1:
+            break
+    check("an enabled admin always remains (10 races)", db.count_enabled_admins(), 1)
+
+
+def test_review_refreshes_take_turns():
+    section("Review #12-13: batch refreshes never overlap; a deleted listing doesn't stop a batch")
+    import threading
+    import time as _time
+    from app import refresh, scheduler
+    fresh_db()
+    user = auth.register("owner", "correct-horse")
+    pids = [db.add_product(f"P{i}", None, user_id=user["id"]) for i in range(3)]
+    for pid in pids:
+        db.add_source(pid, f"https://www.amazon.sg/dp/B0TEST000{pid}", None)
+
+    active, peak = [0], [0]
+    lock = threading.Lock()
+    saved = (refresh.refresh_source, refresh.DELAY_BETWEEN_REQUESTS)
+
+    def tracked_refresh(source_id):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        _time.sleep(0.03)
+        with lock:
+            active[0] -= 1
+
+    refresh.refresh_source, refresh.DELAY_BETWEEN_REQUESTS = tracked_refresh, 0
+    try:
+        threads = [threading.Thread(target=refresh.refresh_all),
+                   threading.Thread(target=refresh.refresh_products, args=(pids,))]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        refresh.refresh_source, refresh.DELAY_BETWEEN_REQUESTS = saved
+    check("scheduled and 'my prices' refresh never run side by side", peak[0], 1)
+
+    scheduler._scheduler.add_job(refresh.refresh_all, "interval", hours=6, id=scheduler.REFRESH_JOB_ID)
+    try:
+        scheduler.refresh_all_now()
+        check("admin 'refresh now' reuses the scheduled job (no parallel copy)",
+              [j.id for j in scheduler._scheduler.get_jobs()], [scheduler.REFRESH_JOB_ID])
+    finally:
+        scheduler._scheduler.remove_all_jobs()
+
+    # A listing deleted while its price is being fetched.
+    from app.scraper import PriceResult
+    victim = db.get_sources(pids[0])[0]["id"]
+    survivor = db.get_sources(pids[1])[0]["id"]
+    saved_fetch = refresh.fetch_price
+
+    def fetch_then_delete(url, selector=None):
+        if url.endswith(f"000{pids[0]}"):
+            db.delete_source(victim)
+        return PriceResult(price=100.0, currency="SGD", strategy="stub")
+
+    refresh.fetch_price, refresh.DELAY_BETWEEN_REQUESTS = fetch_then_delete, 0
+    try:
+        refresh.refresh_products(pids[:2])
+    finally:
+        refresh.fetch_price, refresh.DELAY_BETWEEN_REQUESTS = saved_fetch, saved[1]
+    check("deleted mid-fetch: batch carried on to the next listing",
+          [s["price"] for s in db.get_snapshots(survivor)], [100.0])
+
+
 TESTS = [
     test_storage,
     test_passwords,
@@ -600,6 +831,13 @@ TESTS = [
     test_public_search,
     test_currency_is_personal,
     test_admin_page,
+    test_review_as_quoted_beats_site_default,
+    test_review_settings_never_freeze_config,
+    test_review_admin_numbers_render_exactly,
+    test_review_ignored_env_is_reported,
+    test_review_parallel_guessing_is_capped,
+    test_review_admins_cannot_both_demote,
+    test_review_refreshes_take_turns,
 ]
 
 if __name__ == "__main__":

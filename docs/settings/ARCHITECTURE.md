@@ -19,8 +19,13 @@ and pause or resume lookups.
 Each value is a **deduced** morphism: `effective(key) = db(key) ∨ env(key) ∨
 default(key)`, with validation at each step. Reading it at use time, rather than
 at import, is what makes "no restart" true. Before this change, the values were
-module constants frozen at import. Validation happens in the setter, so an
-invalid value never becomes the stored one.
+module constants frozen at import. Validation happens in `clean_*`, before any
+write, so an invalid value never becomes the stored one.
+
+`db?` is kept **partial on purpose**: the admin form stores a value only when it
+differs from the effective one. Storing every field on every save would freeze
+the env var and code default of every untouched field into the DB, silently
+turning off later env changes (found by the 2026-09-24 code review).
 
 ## 3. Core category
 ```mermaid
@@ -48,17 +53,23 @@ graph LR
 | `env?` | `SettingKey → value` | Partial | the old environment variable (`REFRESH_INTERVAL_HOURS`, `DISCOVER_*`, `SEARCH_DOMAINS`) |
 | `default` | `SettingKey → value` | Total | built in |
 | `effective` | `SettingKey → value` | Deduced | the first *valid* of db, env, default. Read at use time |
+| `ignored_env` | `() → 𝕊*` | Total | env values that are set but invalid: logged once and listed on the admin page, never dropped silently |
+| shops searched | `() → Domain*` | Deduced | `available_shops − search_domains_off`. The **off**-list is stored, so a shop added to `ADAPTERS` later is searched without an admin |
 
 ## 6. Composition rules
 1. **Range-checked:** refresh 1–168 h; per-shop 1–20; price lookups 0–20. The
-   currency must be one of `DISPLAY_CURRENCIES`. Shops must be ones an adapter
-   knows, never an arbitrary site.
-2. **All or nothing** on the admin form: any invalid value restores every value
-   saved earlier in that submission.
+   currency must be one of `DISPLAY_CURRENCIES`. Shops are matched *exactly*
+   against the known list (never a substring), so an admin can switch shops off
+   but never add an arbitrary site.
+2. **Clean first, write after:** the admin form cleans every field before writing
+   any, so an invalid field changes nothing at all. Only changed values are
+   stored (see §2).
 3. **Applied live:** search reads `search_domains()` per search; the stream reads
-   the limits per request; the refresh interval reschedules the running job.
-4. **Pause is honoured at the source:** `history.schedule_backfill` returns
-   without scheduling while paused.
+   the limits per request; the refresh interval reschedules the running job, and
+   only when it changed (a reschedule restarts the countdown).
+4. **Pause is honoured at the source and mid-run:** `history.schedule_backfill`
+   schedules nothing while paused; a queued or running `backfill_product` stops at
+   the next listing; `wayback_lookup` stops before its next capture.
 
 ## 7. Atoms owned (FRAMEWORK §4)
 **Trn**: the typed getters and validated setters in `site_settings`, and

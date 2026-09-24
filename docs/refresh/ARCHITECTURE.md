@@ -43,9 +43,16 @@ graph LR
 1. **Every attempt is recorded.** A failure is a snapshot with `error`, so the UI
    can say *why* a shop shows no price.
 2. **Polite and sequential:** `DELAY_BETWEEN_REQUESTS = 1.5 s`, never concurrent
-   (a deliberate choice, 2026-09-24).
+   (a deliberate choice, 2026-09-24). Batches (the schedule, an admin's "refresh
+   everything", a user's "refresh my prices") **take turns** on `_batch_lock`.
+   Two at once would hit the same shops twice as fast. The admin button runs the
+   scheduled job early rather than adding a parallel copy of it.
 3. **The quoted currency is stored.** No conversion happens here (invariant 1).
 4. One bad source never aborts a batch: unexpected errors become error snapshots.
+   A listing deleted while its price was being fetched is skipped, not an error.
+5. **Web requests never wait on a batch.** "Refresh my prices" queues a background
+   job (one per user) and returns at once. Holding the request open for
+   sources × 1.5 s would tie up a worker and time out the browser.
 
 ## 7. Atoms owned (FRAMEWORK §4)
 **Trn**: `refresh_source`, `refresh_product`, `refresh_all`, `start_scheduler`,

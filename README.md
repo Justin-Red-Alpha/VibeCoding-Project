@@ -126,15 +126,22 @@ The **Admin** page (top bar, admins only) has:
 - **Users:** make admin or user, disable (which signs them out), delete (which also
   deletes their products). The site always keeps at least one admin.
 - **Site settings:**
-  - the default currency for visitors;
-  - the shops *Find deals* searches;
+  - the default currency for visitors and for users who haven't picked one;
+  - the shops *Find deals* searches (untick a shop to switch it off; shops added
+    to the app later are switched on automatically);
   - the refresh interval (1–168 h);
   - listings kept per shop;
   - missing prices looked up per search.
 
-  They apply immediately, with no restart.
-- **Maintenance:** refresh everyone's prices now, refresh exchange rates, and
-  pause or resume the Internet Archive lookups.
+  They apply immediately, with no restart. If any field is invalid, nothing is
+  saved. Saving only records what you actually changed, so untouched fields keep
+  following their environment variables (see [Settings](#7-settings)).
+- **Maintenance:** refresh everyone's prices now, refresh exchange rates (it tells
+  you if the fetch failed and older rates are still in use), and pause or resume
+  the Internet Archive lookups. Pausing also stops lookups already running.
+
+**Refresh my prices** (on your dashboard) runs in the background. Reload after a
+minute or two to see the new prices.
 
 Passwords are stored as salted scrypt hashes, never in plain text. After 5 wrong
 passwords, that username is locked for 15 minutes. There's no password reset
@@ -273,7 +280,9 @@ means the series reflects today's rate, not the rate on the day each price was s
 ## 7. Settings
 
 The first four are easiest to change on the **Admin** page, which overrides these
-environment variables. The variables remain as defaults.
+environment variables. The variables remain as defaults. A variable set to an
+unusable value (e.g. `REFRESH_INTERVAL_HOURS=0.5`, below the 1-hour minimum) is
+ignored in favour of the default. The Admin page lists any it is ignoring.
 
 | Variable | Default | Purpose |
 |---|---|---|

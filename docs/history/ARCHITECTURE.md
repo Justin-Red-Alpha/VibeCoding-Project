@@ -78,6 +78,10 @@ reason. This is the only path from the archive to the UI.
    - stop at the first 429 or refused connection;
    - a process-wide pause of 15 min after a 429, 60 min after a refusal;
    - one job per product.
+7. **An admin's pause is obeyed at once:** nothing new is scheduled, a queued or
+   running product job stops at its next listing, and a running lookup stops
+   before its next capture. An admin often pauses *because* the archive is
+   rate-limiting us, so finishing 24 more requests would defeat the point.
 
 ## 7. Atoms owned (FRAMEWORK §4)
 **Trn**

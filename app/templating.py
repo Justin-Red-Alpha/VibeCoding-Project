@@ -10,10 +10,14 @@ from .adapters import ADAPTERS
 
 
 def display_currency_for(user) -> str | None:
-    """The currency this visitor sees prices in: their own choice, else the site
-    default. None means "as quoted"."""
-    if user is not None and user["display_currency"]:
-        return user["display_currency"]
+    """The currency this visitor sees prices in. None means "as quoted".
+
+    A user's column has three states: NULL = never chose (use the site default),
+    '' = chose "As quoted" explicitly, 'MYR' etc. = chose a currency. Keeping
+    '' distinct from NULL is what lets a user opt out of a site default.
+    """
+    if user is not None and user["display_currency"] is not None:
+        return user["display_currency"] or None
     return site_settings.default_currency()
 
 

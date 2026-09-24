@@ -10,7 +10,8 @@ being held in memory.
 ## Completeness
 | Object / morphism | State | Notes |
 | --- | --- | --- |
-| register / sign in / sign out, two roles, first = admin | ✅ built | 142 checks in `tests/test_auth.py` |
+| register / sign in / sign out, two roles, first = admin | ✅ built | 171 checks in `tests/test_auth.py` |
+| throttle and last-admin guard hold under parallel requests | ✅ built | fixed after the 2026-09-24 code review; tested with real threads |
 | per-user products, admin sees all by link | ✅ built | 404 for another user's product |
 | cross-site POST guard, local-only redirects | ✅ built | fixed the old open redirect in `/settings/currency` |
 | admin: promote / demote / disable / delete, last-admin guard | ✅ built | |

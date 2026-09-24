@@ -22,6 +22,7 @@
 | `last = done` | `Candidate* → Summary` | `app/main.py:_discovery_summary` | built |
 | `target_currency?` | `Form → Currency` | `app/main.py:_target_currency` | built |
 | display currency | `() → Currency?` | `app/main.py:display_currency` | built |
+| a user's choice (NULL = site default, '' = as quoted) | `User? → Currency?` | `app/templating.py:display_currency_for` | built |
 | route: dashboard | `GET /` | `app/main.py:dashboard` | built |
 | route: product page | `GET /product/{id}` | `app/main.py:product_detail` | built |
 | route: discover page | `GET /discover` | `app/main.py:discover_page` | built |
@@ -33,7 +34,8 @@
 | route: look for archived prices | `POST /products/{id}/history` | `app/main.py:lookup_history` | built |
 | history note per listing | `Source → 𝕊` | `app/templates/product.html:history_by_source` | built |
 | archived row marker + link | `PriceSnapshot → HTML` | `app/templates/product.html:origin_ref` | built |
-| route: refresh my prices | `POST /refresh` (own products only) | `app/main.py:refresh_mine` | built |
+| route: refresh my prices | `POST /refresh` (own products; queued in the background, one job per user) | `app/main.py:refresh_mine` | built |
+| "refreshing" notice | `?refreshing=1 → HTML` | `app/main.py:dashboard` | built |
 | startup | FX + scheduler | `app/main.py:lifespan` | built |
 | JS: render a row | `row → <tr>` | `app/templates/discover.html:makeRow` | built |
 | JS: paint a price | `row → cell` | `app/templates/discover.html:paintPrice` | built |
@@ -56,6 +58,7 @@
 | 8. current price is live-only | `app/main.py:_latest_per_source` | `tests/test_history.py:test_current_price_is_live_only` |
 | tracking schedules an archive lookup | `app/main.py:lookup_history` | `tests/test_history.py:test_routes_schedule_lookups` |
 | provenance shown on the page | `app/templates/product.html:history_by_source` | `tests/test_history.py:test_product_page_shows_provenance` |
+| "As quoted" overrides the site default | `app/templating.py:display_currency_for` | `tests/test_auth.py:test_review_as_quoted_beats_site_default` |
 
 ## Notes / divergences
 - Rule 2 (the JS is a dumb renderer) is a convention with no automated check.

@@ -12,7 +12,8 @@ module constant is now an admin setting, and applies without a restart.
 | --- | --- | --- |
 | default currency, shops, refresh interval, discovery limits | ✅ built | env vars remain as fallbacks |
 | pause / resume archive lookups | ✅ built | the "data on hold" switch |
-| refresh-all and FX maintenance actions | ✅ built | refresh-all runs as a background job |
+| refresh-all and FX maintenance actions | ✅ built | refresh-all runs the scheduled job early; FX reports a failed fetch |
+| saves write only changes; invalid form writes nothing; bad env values listed | ✅ built | after the 2026-09-24 code review |
 
 ## Needs work
 None.

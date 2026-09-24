@@ -57,8 +57,10 @@ graph LR
 1. **The first account is the admin,** and it claims every unowned product.
    It's atomic (`BEGIN IMMEDIATE`), so two first sign-ups can't both win.
 2. **At least one enabled admin always exists.** Demote, disable and delete are
-   refused when they'd remove the last one. Enforced in `auth`, so every route
-   inherits it.
+   refused when they'd remove the last one. The count and the change happen in
+   one `BEGIN IMMEDIATE` transaction (`db.guarded_user_change`), so two admins
+   demoting each other at once can't both succeed. Every route inherits it via
+   `auth`.
 3. **Passwords are never stored.** Only salted scrypt with its parameters is
    kept, and verification is constant-time.
 4. **Sessions are opaque and hashed at rest.** The raw token exists only in the
@@ -67,7 +69,8 @@ graph LR
 5. **One failure message.** A wrong password and an unknown user look the same,
    and an unknown user still costs one scrypt.
 6. **Throttle:** 5 failures per username in 15 min locks it for 15 min. It's held
-   in memory.
+   in memory. Guesses still being checked count toward the 5 (under a lock), so
+   parallel requests can't all slip past before any failure is recorded.
 7. **Every product and source route goes through `authorize_product?`** (or
    `source_for`). There are no per-route ad-hoc checks.
 8. **Redirect targets from requests are same-site paths only** (`local_path`).

@@ -373,6 +373,45 @@ def test_scheduling():
         history.backfill_source = saved
 
 
+def test_admin_pause_stops_running_lookups():
+    section("An admin's pause stops lookups already queued or running")
+    from app import scheduler, site_settings
+    canonical = "https://www.amazon.com/dp/B09XS7JWHH"
+    months = [(f"2025{m:02d}01000000", canonical) for m in range(1, 7)]
+    archive = FakeArchive(cdx={canonical: months})
+    pages = lambda: [c for c in archive.calls if c.startswith("page:")]
+    result = history.wayback_lookup(_source(canonical), adapter_for(canonical),
+                                    get=archive.get, sleep=archive.sleep, clock=lambda: archive.now,
+                                    paused=lambda: len(pages()) >= 2)
+    check("paused mid-run: stops after the current copy", len(pages()), 2)
+    check("...and says an admin paused it", (result.kind, result.reason),
+          ("unavailable", history.PAUSED_REASON))
+
+    product_id, source_id = _amazon_product()
+    extra = db.add_source(product_id, "https://www.amazon.com/dp/B0TEST0002", None)
+    seen = []
+    saved = history.backfill_source
+
+    def look_up_then_pause(sid, lookups=None):
+        seen.append(sid)
+        site_settings.set_history_paused(True)  # an admin pauses during the first listing
+
+    history.backfill_source = look_up_then_pause
+    try:
+        history.backfill_product(product_id)
+        check("a queued product job stops at the next listing", seen, [source_id])
+        seen.clear()
+        history.backfill_product(product_id)
+        check("a job that starts while paused does nothing", seen, [])
+        history.schedule_backfill(product_id)
+        check("and nothing new is queued", scheduler._scheduler.get_job(f"history-{product_id}"), None)
+    finally:
+        history.backfill_source = saved
+        site_settings.set_history_paused(False)
+        scheduler._scheduler.remove_all_jobs()
+    check_that("(the second listing was simply left for later)", extra not in seen)
+
+
 # --- the product page and verdict ------------------------------------------------------
 
 def _archive(source_id, price, when):
@@ -468,6 +507,7 @@ TESTS = [
     test_rate_limit_backoff,
     test_backfill_source,
     test_scheduling,
+    test_admin_pause_stops_running_lookups,
     test_current_price_is_live_only,
     test_verdict_uses_archived_history,
     test_routes_schedule_lookups,

@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import re
 import secrets
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -102,10 +103,13 @@ def register(username: str, password: str):
 
 
 _failures: dict[str, list[float]] = {}
+_in_flight: dict[str, int] = {}      # attempts currently being checked, per username
+_throttle_lock = threading.Lock()
 _clock = time.monotonic  # tests replace this
 
 
 def _recent_failures(key: str) -> list[float]:
+    """Call with _throttle_lock held."""
     now = _clock()
     kept = [t for t in _failures.get(key, []) if now - t < LOCK_WINDOW_S]
     _failures[key] = kept
@@ -113,19 +117,38 @@ def _recent_failures(key: str) -> list[float]:
 
 
 def authenticate(username: str, password: str):
-    """Return the user row, or raise AuthError with a message safe to display."""
-    key = (username or "").strip().lower()
-    if len(_recent_failures(key)) >= LOCK_AFTER_FAILURES:
-        raise AuthError("Too many failed attempts for this username. Try again in 15 minutes.")
+    """Return the user row, or raise AuthError with a message safe to display.
 
-    user = db.get_user_by_name(key) if key else None
-    ok = verify_password(password or "", user["password_hash"] if user else _DUMMY_HASH)
-    if not (user and ok):
-        _failures.setdefault(key, []).append(_clock())
+    Each attempt reserves a slot under the lock *before* the slow scrypt check,
+    and the limit counts failures plus attempts still in flight. Without that,
+    40 parallel requests would all pass "fewer than 5 failures?" before any
+    failure was recorded: 40 guesses instead of 5.
+    """
+    key = (username or "").strip().lower()
+    with _throttle_lock:
+        if len(_recent_failures(key)) + _in_flight.get(key, 0) >= LOCK_AFTER_FAILURES:
+            raise AuthError("Too many failed attempts for this username. Try again in 15 minutes.")
+        _in_flight[key] = _in_flight.get(key, 0) + 1
+
+    ok = False
+    try:
+        user = db.get_user_by_name(key) if key else None
+        ok = verify_password(password or "", user["password_hash"] if user else _DUMMY_HASH)
+        ok = bool(user and ok)
+    finally:
+        with _throttle_lock:
+            _in_flight[key] -= 1
+            if not _in_flight[key]:
+                del _in_flight[key]
+            if ok:
+                _failures.pop(key, None)
+            else:
+                _failures.setdefault(key, []).append(_clock())
+
+    if not ok:
         raise AuthError("Wrong username or password.")
     if user["disabled_at"]:
         raise AuthError("This account has been disabled by an admin.")
-    _failures.pop(key, None)
     return user
 
 
@@ -237,40 +260,29 @@ def local_path(target: str | None, default: str = "/") -> str:
     return target
 
 
-# --- admin actions (the last-admin guard lives here, so every path enforces it) -------
+# --- admin actions -----------------------------------------------------------------------
+# The last-admin guard lives in database.guarded_user_change: the check and the
+# write share one locked transaction, so concurrent admin actions can't race it.
 
-def _would_remove_last_admin(target) -> bool:
-    return (target["role"] == "admin" and not target["disabled_at"]
-            and db.count_enabled_admins() <= 1)
-
-
-def _target(user_id: int):
-    target = db.get_user(user_id)
-    if target is None:
-        raise AuthError("No such user.")
-    return target
+def _guarded(user_id: int, **change) -> None:
+    try:
+        db.guarded_user_change(user_id, **change)
+    except db.LastAdmin:
+        raise AuthError("The site needs at least one admin.") from None
+    except db.NoSuchUser:
+        raise AuthError("No such user.") from None
 
 
 def change_role(user_id: int, role: str) -> None:
     if role not in ROLES:
         raise AuthError("Unknown role.")
-    target = _target(user_id)
-    if role == "user" and _would_remove_last_admin(target):
-        raise AuthError("The site needs at least one admin.")
-    db.set_user_role(user_id, role)
+    _guarded(user_id, role=role)
 
 
 def set_disabled(user_id: int, disabled: bool) -> None:
-    target = _target(user_id)
-    if disabled and _would_remove_last_admin(target):
-        raise AuthError("The site needs at least one admin.")
-    db.set_user_disabled(user_id, disabled)
-    if disabled:
-        db.delete_user_sessions(user_id)
+    """Disabling also ends every session of that user, in the same transaction."""
+    _guarded(user_id, disabled=disabled)
 
 
 def delete_account(user_id: int) -> None:
-    target = _target(user_id)
-    if _would_remove_last_admin(target):
-        raise AuthError("The site needs at least one admin.")
-    db.delete_user(user_id)
+    _guarded(user_id, delete=True)

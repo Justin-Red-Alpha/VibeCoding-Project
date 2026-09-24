@@ -45,6 +45,9 @@
         </form>
         {% endif %}
     </div>
+    {% if refreshing %}
+        <p class="notice" role="status">Refreshing your prices in the background. Reload in a minute or two to see them.</p>
+    {% endif %}
     {% if not views %}
         <p class="hint">Nothing tracked yet — add a product above.</p>
     {% endif %}

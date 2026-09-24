@@ -78,11 +78,15 @@ def logout(request: Request):
 @router.post("/settings/currency")
 def set_display_currency(currency: str = Form(""), next_url: str = Form("/"),
                          user=Depends(auth.require_user)):
-    """The signed-in user's own "Show prices in". It never affects anyone else."""
+    """The signed-in user's own "Prices in". It never affects anyone else.
+
+    "As quoted" is stored as '' (an explicit choice), not NULL: NULL means "no
+    choice yet, follow the site default", which "As quoted" must override.
+    """
     choice = currency.strip().upper()
     if choice and choice not in DISPLAY_CURRENCIES:
-        choice = ""
-    db.set_user_currency(user["id"], choice or None)
+        return RedirectResponse(url=auth.local_path(next_url), status_code=HTTP_303_SEE_OTHER)
+    db.set_user_currency(user["id"], choice)
     if choice:
         from . import fx
         fx.refresh_rates()

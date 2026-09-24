@@ -319,16 +319,24 @@ def add_snapshot(
     origin_ref: str | None = None,
 ) -> None:
     """Record one observation. Live checks leave `fetched_at` to now and `origin`
-    empty; archived ones pass the capture time and where it came from."""
+    empty; archived ones pass the capture time and where it came from.
+
+    Raises sqlite3.IntegrityError if the source was deleted meanwhile. The failed
+    insert is rolled back and the connection closed before it propagates: left
+    open, its transaction would keep the write lock and every later write would
+    fail with "database is locked".
+    """
     conn = get_connection()
-    conn.execute(
-        "INSERT INTO price_snapshots "
-        "(source_id, price, currency, strategy, fetched_at, error, origin, origin_ref) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (source_id, price, currency, strategy, fetched_at or now_iso(), error, origin, origin_ref),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        with conn:  # commits, or rolls back on error
+            conn.execute(
+                "INSERT INTO price_snapshots "
+                "(source_id, price, currency, strategy, fetched_at, error, origin, origin_ref) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (source_id, price, currency, strategy, fetched_at or now_iso(), error, origin, origin_ref),
+            )
+    finally:
+        conn.close()
 
 
 def get_origin_refs(source_id: int) -> set[str]:
@@ -466,6 +474,59 @@ def count_enabled_admins() -> int:
     ).fetchone()[0]
     conn.close()
     return count
+
+
+class LastAdmin(Exception):
+    """The change would leave the site without an enabled admin."""
+
+
+class NoSuchUser(Exception):
+    pass
+
+
+def guarded_user_change(user_id: int, *, role: str | None = None,
+                        disabled: bool | None = None, delete: bool = False) -> None:
+    """Change a user's role, disable/enable them, or delete them, refusing any change
+    that would leave no enabled admin.
+
+    The check and the write happen in ONE transaction under BEGIN IMMEDIATE (the
+    write lock), so two admins demoting each other at the same moment can't both
+    see "2 admins" and both succeed.
+    """
+    conn = get_connection()
+    conn.isolation_level = None
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        target = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if target is None:
+            raise NoSuchUser(user_id)
+        removes_admin = (
+            target["role"] == "admin" and target["disabled_at"] is None
+            and (delete or role == "user" or disabled is True)
+        )
+        if removes_admin:
+            admins = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled_at IS NULL"
+            ).fetchone()[0]
+            if admins <= 1:
+                raise LastAdmin(user_id)
+        if delete:
+            conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        else:
+            if role is not None:
+                conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+            if disabled is not None:
+                conn.execute("UPDATE users SET disabled_at = ? WHERE id = ?",
+                             (now_iso() if disabled else None, user_id))
+                if disabled:
+                    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
 
 
 def set_user_role(user_id: int, role: str) -> None:

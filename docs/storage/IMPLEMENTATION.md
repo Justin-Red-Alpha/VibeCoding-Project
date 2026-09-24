@@ -28,7 +28,7 @@
 | additive columns | extend `Product` | `app/database.py:_add_missing_columns` | built |
 | `add_product` | `row → id` | `app/database.py:add_product` | built |
 | `add_source` | `row → id` | `app/database.py:add_source` | built |
-| `add_snapshot` | `row → ()` | `app/database.py:add_snapshot` | built |
+| `add_snapshot` | `row → ()` (rolls back and closes on a refused insert) | `app/database.py:add_snapshot` | built |
 | latest snapshot | `Source → PriceSnapshot?` | `app/database.py:get_latest_snapshot` | built |
 | `origin?`, `origin_ref?` | `PriceSnapshot → {wayback}`, `→ Url` | `app/database.py:origin_ref` | built |
 | archived refs per listing | `Source → Url*` | `app/database.py:get_origin_refs` | built |

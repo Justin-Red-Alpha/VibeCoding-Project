@@ -148,10 +148,38 @@ a capture. `history` now keeps a 4 s gap, stops at the first 429 or refused
 connection, and pauses all lookups for 15 or 60 minutes. Don't hand-probe
 web.archive.org in loops; `tests/test_history.py` fakes it.
 
+**A failed SQLite write must roll back before anything else writes.** Python's
+`sqlite3` opens a transaction implicitly, and an INSERT that raises (for example,
+a foreign-key refusal because the source was deleted mid-refresh) leaves it open
+and holding the write lock. Every other write then waits 5 s and fails with
+"database is locked". `add_snapshot` uses `with conn:` plus `close()` in `finally`
+for this reason; do the same in any write that is *expected* to fail sometimes.
+
+**Check-then-act races (found by the 2026-09-24 code review).** "Count the admins,
+then demote" and "count the failures, then check the password" each let two
+parallel requests both pass the check. The admin guard now counts and writes in
+one `BEGIN IMMEDIATE` transaction (`db.guarded_user_change`). The sign-in throttle
+counts guesses still in flight under a lock. Keep any new "only if fewer than N"
+rule atomic in the same way.
+
+**Admin settings store only what changed.** Writing every field on each save froze
+env values and defaults into the DB, so a later env change silently did nothing.
+Shops are stored as the ones switched *off*, so a shop added to `ADAPTERS` is
+searched automatically. See `app/site_settings.py`'s docstring.
+
 **`--reload` can orphan its worker on Windows.** When the reloader is killed, the
 `multiprocessing` worker it spawned keeps the port and serves **stale code**. Port
 8000 then shows as owned by a dead PID. Find the child with
 `Get-CimInstance Win32_Process | ? ParentProcessId -eq <dead pid>` and stop it.
+
+**`--reload` never reloads when started from an agent's background shell.**
+uvicorn 0.30.6 on Windows restarts its worker by sending a Ctrl+C *console* event.
+A background shell has no console, so the worker never receives it. The log shows
+`Reloading...` and nothing after it: the reloader waits forever, and the old
+worker keeps serving the code it started with. The code isn't at fault (the
+2026-09-24 pre-fix commit behaved the same). After editing code, **stop and
+restart** a server you started in the background, then check that a new
+`Started server process` line appears. In a normal terminal, `--reload` works.
 
 **Migration / FK cascade.** `ALTER TABLE x RENAME TO x_v1` makes SQLite rewrite
 *other tables'* foreign keys to follow the rename. With `ON DELETE CASCADE`, the
@@ -282,7 +310,9 @@ Python 3.14 + Playwright/chromium are already installed in `.venv`.
 - Keyed search providers (SerpAPI, Brave, eBay Browse) are **not built**:
   `available_providers()` returns only DuckDuckGo. (This line used to say
   "scaffolded", which was never true.)
-- `refresh` has no offline tests (see `docs/refresh/STATUS.md`).
+- `refresh`: batch turn-taking and deleted-source tolerance are tested, but rules 1
+  and 3 (every attempt recorded, quoted currency stored) aren't (see
+  `docs/refresh/STATUS.md`).
 - Converted history uses *today's* rate for all snapshots (fine within one
   currency; across currencies the series reflects today's rate, not each day's).
 - FX figures are mid-market — they exclude shipping, card FX fees and import duty.
