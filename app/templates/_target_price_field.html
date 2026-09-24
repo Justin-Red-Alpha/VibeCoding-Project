@@ -5,7 +5,7 @@
     <select name="target_currency" aria-label="Target price currency">
         <option value="">Shop's currency</option>
         {% for c in fx_currencies %}
-            <option value="{{ c }}" {{ 'selected' if current_display_currency() == c }}>{{ c }}</option>
+            <option value="{{ c }}" {{ 'selected' if display_pref == c }}>{{ c }}</option>
         {% endfor %}
     </select>
 </div>

@@ -1,0 +1,22 @@
+# Settings — status
+
+> Reconciles ARCHITECTURE.md (intent) against IMPLEMENTATION.md (code). Update it
+> whenever code changes what is done (§6.5).
+
+## Headline
+✅ Built (2026-09-24). Everything that used to be an environment variable or a
+module constant is now an admin setting, and applies without a restart.
+
+## Completeness
+| Object / morphism | State | Notes |
+| --- | --- | --- |
+| default currency, shops, refresh interval, discovery limits | ✅ built | env vars remain as fallbacks |
+| pause / resume archive lookups | ✅ built | the "data on hold" switch |
+| refresh-all and FX maintenance actions | ✅ built | refresh-all runs as a background job |
+
+## Needs work
+None.
+
+## Where to dig
+- Model: ARCHITECTURE.md · Code map: IMPLEMENTATION.md
+- Spec: `openspec/specs/site-administration/`

@@ -527,3 +527,42 @@ select {
 }
 .shop-status-error { color: var(--critical-text); max-width: 380px; text-align: right; }
 .shop-section .compare-table { margin-top: 6px; }
+
+/* --- accounts and admin --------------------------------------------------- */
+
+a.btn { display: inline-block; text-decoration: none; }
+.nav-link { color: var(--text-secondary); text-decoration: none; font-size: 0.9rem; }
+.nav-link:hover { color: var(--text-primary); text-decoration: underline; }
+.signed-in-as { font-size: 0.88rem; color: var(--text-secondary); }
+.role-tag {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    background: var(--warning-fill);
+    color: var(--warning-text);
+}
+.notice-error { background: var(--critical-fill); color: var(--critical-text); }
+
+.auth-card { max-width: 420px; margin: 24px auto; }
+.auth-form, .settings-form { display: flex; flex-direction: column; gap: 14px; }
+.auth-form label, .settings-form label {
+    display: flex; flex-direction: column; gap: 6px;
+    font-size: 0.88rem; font-weight: 600; color: var(--text-secondary);
+}
+.auth-form .hint, .settings-form .hint { font-weight: 400; font-size: 0.8rem; margin: 0; }
+.settings-form { max-width: 520px; }
+.settings-form fieldset { border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; }
+.settings-form legend { font-size: 0.88rem; font-weight: 600; color: var(--text-secondary); }
+.check-label { flex-direction: row !important; align-items: center; font-weight: 400 !important; }
+
+.table-scroll { overflow-x: auto; }
+.admin-actions { white-space: nowrap; }
+.admin-actions .inline-form + .inline-form { margin-left: 10px; }
+.btn-link-danger { color: var(--critical-text); }
+.maintenance-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.brand { white-space: nowrap; }
+.account-form { display: flex; align-items: center; gap: 8px; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.section-head h2 { margin: 0; }

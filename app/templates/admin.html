@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Admin — Price Drop Decision Tracker{% endblock %}
+{% block content %}
+<h2>Admin</h2>
+{% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="card">
+    <h3>Users</h3>
+    <div class="table-scroll">
+    <table class="compare-table admin-users">
+        <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Joined</th><th>Products</th><th>Actions</th></tr></thead>
+        <tbody>
+        {% for u in users %}
+            <tr>
+                <td class="retailer-cell">{{ u.username }}{% if user and u.id == user.id %} <span class="hint">(you)</span>{% endif %}</td>
+                <td>{% if u.role == 'admin' %}<span class="role-tag">admin</span>{% else %}user{% endif %}</td>
+                <td>{% if u.disabled_at %}<span class="error-text">disabled</span>{% else %}active{% endif %}</td>
+                <td class="hint">{{ u.created_at[:10] }}</td>
+                <td>{{ u.product_count }}</td>
+                <td class="admin-actions">
+                    <form method="post" action="/admin/users/{{ u.id }}/role" class="inline-form">
+                        <input type="hidden" name="role" value="{{ 'user' if u.role == 'admin' else 'admin' }}">
+                        <button type="submit" class="btn-link">{{ 'Make user' if u.role == 'admin' else 'Make admin' }}</button>
+                    </form>
+                    {% if u.disabled_at %}
+                        <form method="post" action="/admin/users/{{ u.id }}/enable" class="inline-form">
+                            <button type="submit" class="btn-link">Enable</button>
+                        </form>
+                    {% else %}
+                        <form method="post" action="/admin/users/{{ u.id }}/disable" class="inline-form">
+                            <button type="submit" class="btn-link">Disable</button>
+                        </form>
+                    {% endif %}
+                    <form method="post" action="/admin/users/{{ u.id }}/delete" class="inline-form"
+                          onsubmit="return confirm('Delete {{ u.username }} and their {{ u.product_count }} tracked product(s)? This cannot be undone.');">
+                        <button type="submit" class="btn-link btn-link-danger">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p class="hint">The site always keeps at least one active admin. Disabling signs the user out at once.
+        Deleting also deletes their tracked products.</p>
+</section>
+
+<section class="card">
+    <h3>Site settings</h3>
+    <form method="post" action="/admin/settings" class="settings-form">
+        <label>Default "Show prices in" (visitors, and users who haven't chosen)
+            <select name="default_currency">
+                <option value="">As quoted</option>
+                {% for c in fx_currencies %}
+                    <option value="{{ c }}" {{ 'selected' if default_currency == c }}>{{ c }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <fieldset>
+            <legend>Shops searched by "Find deals"</legend>
+            {% for domain in shop_choices %}
+                <label class="check-label">
+                    <input type="checkbox" name="search_domains" value="{{ domain }}" {{ 'checked' if domain in search_domains }}>
+                    {{ domain }}
+                </label>
+            {% endfor %}
+        </fieldset>
+        {% for key, label in labels.items() %}
+            <label>{{ label }}
+                <input type="number" name="{{ key }}" value="{{ numbers[key]|round(2)|string|replace('.0', '') }}"
+                       step="{{ '0.5' if key == 'refresh_interval_hours' else '1' }}" required>
+            </label>
+        {% endfor %}
+        <p class="hint">Refresh interval 1–168 hours · listings per shop 1–20 · price lookups per search 0–20.
+            Changes apply from the next search or refresh; no restart needed.</p>
+        <button type="submit" class="btn btn-primary">Save settings</button>
+    </form>
+</section>
+
+<section class="card">
+    <h3>Maintenance</h3>
+    <div class="maintenance-actions">
+        <form method="post" action="/admin/maintenance/refresh-all">
+            <button type="submit" class="btn btn-secondary">Refresh every user's prices now</button>
+        </form>
+        <form method="post" action="/admin/maintenance/fx">
+            <button type="submit" class="btn btn-secondary">Refresh exchange rates</button>
+        </form>
+        <form method="post" action="/admin/maintenance/history">
+            {% if history_paused %}
+                <input type="hidden" name="action" value="resume">
+                <button type="submit" class="btn btn-secondary">Resume archive lookups</button>
+            {% else %}
+                <input type="hidden" name="action" value="pause">
+                <button type="submit" class="btn btn-secondary">Pause archive lookups</button>
+            {% endif %}
+        </form>
+    </div>
+    <p class="hint">
+        Exchange rates are {% if fx_age is none %}not loaded yet{% else %}{{ "%.1f"|format(fx_age) }} hours old{% endif %}.
+        Archive lookups are <strong>{{ 'paused' if history_paused else 'on' }}</strong>
+        (they fetch past prices from the Internet Archive when a listing is tracked).
+    </p>
+</section>
+{% endblock %}

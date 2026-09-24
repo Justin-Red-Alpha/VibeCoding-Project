@@ -9,7 +9,8 @@ docs tree, written in FRAMEWORK.md's Dat/Trn/Loc/Trm terms.
 
 - `docs/architecture-map.md`: the whole-system map and the coherence checklist.
 - `docs/<component>/ARCHITECTURE.md`: each component's intent. The components are
-  discovery, extraction, browser, storage, analysis, fx, web, refresh and history.
+  discovery, extraction, browser, storage, analysis, fx, web, refresh, history,
+  auth and settings.
 - `docs/<component>/IMPLEMENTATION.md`: maps every object and morphism to a
   `file:symbol`.
 - `docs/STATUS.md`: what's built and what isn't.
@@ -45,12 +46,16 @@ Each stage is independently testable, and `tests/` mostly tests stages, not rout
 ## Data model (SQLite, plain `sqlite3`, no ORM on purpose)
 
 ```
-products    (id, name, target_price, target_currency, currency)
+users       (id, username NOCASE UNIQUE, password_hash, role user|admin,
+             display_currency, disabled_at)          -- first account = admin
+  └── sessions       (token_hash, user_id, expires_at)  -- sha256 only; raw token in the cookie
+products    (id, name, target_price, target_currency, currency,
+             user_id → users ON DELETE CASCADE)       -- NULL = pre-accounts, claimed by 1st admin
   └── sources        (id, product_id, retailer, url, price_selector,
   │                   history_checked_at, history_note)                -- same item, many shops
         └── price_snapshots (id, source_id, price, currency, strategy, fetched_at, error,
                              origin, origin_ref)    -- origin NULL = live; 'wayback' = archived
-settings    (key, value)          -- display_currency lives here
+settings    (key, value)          -- site settings (admin page): default currency, shops, intervals, pause
 fx_rates    (base, quote, rate, fetched_at)
 ```
 
@@ -121,6 +126,18 @@ These each cost real debugging. Please don't undo them.
    "cheapest right now". Archived pages are **never rendered**, and JS-priced
    shops are skipped, because the only number in Lazada's archived HTML is the
    list price (invariant 2).
+
+10. **Every product or source route goes through `auth.product_for` / `source_for`.**
+    Products belong to users (`products.user_id`). Another user's product is a
+    **404**, exactly like a missing one, so ids can't be probed; admins may open
+    any. Don't add a product route that reads `db.get_product` directly. Any
+    redirect whose target comes from the request must go through `auth.local_path`
+    (the old `/settings/currency` was an open redirect).
+
+11. **The first account is the admin, and it claims unowned products.** Tests,
+    scripts and live checks must never register on the owner's real
+    `data/app.db`, or the admin slot is taken. Use `tests/helpers.py` (temp DB),
+    or an isolated app instance with a temp `DB_PATH`.
 
 ## Traps already hit (don't rediscover these)
 
@@ -250,6 +267,7 @@ python -m tests.test_search                        # matching, URL filters, thro
 python -m tests.test_currency                      # ranking/chart/target currency rules, DB upgrade
 python -m tests.test_shop_search                   # concurrency, block detection, --reload loop, page spinners
 python -m tests.test_history                       # archived prices: matching, filters, back-off, live-only current
+python -m tests.test_auth                          # accounts, sessions, ownership, admin page, cross-site guard
 ```
 
 `test_currency` points `database.DB_PATH` at a temp file and drives routes with
@@ -268,4 +286,7 @@ Python 3.14 + Playwright/chromium are already installed in `.venv`.
 - Converted history uses *today's* rate for all snapshots (fine within one
   currency; across currencies the series reflects today's rate, not each day's).
 - FX figures are mid-market — they exclude shipping, card FX fees and import duty.
-- No auth, no rate limiting on routes; it's a localhost-only personal tool.
+- **Auth is built for localhost.** SameSite=Lax cookies plus an Origin/Referer
+  guard stand in for per-form CSRF tokens, the login throttle is in memory, and
+  there's no password change or reset. Before exposing the app, add CSRF tokens
+  and HTTPS (the cookie turns `Secure` on https by itself).

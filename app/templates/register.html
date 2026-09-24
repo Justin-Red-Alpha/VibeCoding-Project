@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Register — Price Drop Decision Tracker{% endblock %}
+{% block content %}
+<section class="card auth-card">
+    <h2>Register</h2>
+    {% if first_account %}
+        <p class="notice notice-warning">
+            You're the first: this account becomes the site's <strong>admin</strong>, and any
+            products already tracked will be yours.
+        </p>
+    {% endif %}
+    {% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+    <form method="post" action="/register" class="auth-form">
+        <input type="hidden" name="next" value="{{ next }}">
+        <label>Username
+            <input type="text" name="username" value="{{ username }}" autocomplete="username"
+                   minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]{3,32}" required autofocus>
+            <span class="hint">3–32 letters, digits, dot, underscore or hyphen.</span>
+        </label>
+        <label>Password
+            <input type="password" name="password" autocomplete="new-password" minlength="8" maxlength="256" required>
+            <span class="hint">At least 8 characters.</span>
+        </label>
+        <label>Confirm password
+            <input type="password" name="confirm" autocomplete="new-password" minlength="8" maxlength="256" required>
+        </label>
+        <button type="submit" class="btn btn-primary">Create account</button>
+    </form>
+    <p class="hint">Already registered? <a href="/login?next={{ next|urlencode }}">Log in</a>.</p>
+</section>
+{% endblock %}

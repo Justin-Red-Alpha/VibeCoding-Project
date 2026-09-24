@@ -110,6 +110,37 @@ uvicorn app.main:app --reload
 
 Open **http://127.0.0.1:8000**.
 
+### First run: register first
+
+Click **Register** (top right). **The first account becomes the site's admin**, and
+any products tracked before accounts existed become yours. Everyone who registers
+after that is a normal user.
+
+| | Can do |
+|---|---|
+| **Anyone** (not signed in) | Search deals (*Find deals*) and see prices |
+| **User** | Everything above, plus track products, see *only their own* tracked products, choose their own "Prices in" currency |
+| **Admin** | Everything above, plus the **Admin** page and opening any user's product |
+
+The **Admin** page (top bar, admins only) has:
+- **Users:** make admin or user, disable (which signs them out), delete (which also
+  deletes their products). The site always keeps at least one admin.
+- **Site settings:**
+  - the default currency for visitors;
+  - the shops *Find deals* searches;
+  - the refresh interval (1–168 h);
+  - listings kept per shop;
+  - missing prices looked up per search.
+
+  They apply immediately, with no restart.
+- **Maintenance:** refresh everyone's prices now, refresh exchange rates, and
+  pause or resume the Internet Archive lookups.
+
+Passwords are stored as salted scrypt hashes, never in plain text. After 5 wrong
+passwords, that username is locked for 15 minutes. There's no password reset
+(there's no email): an admin can delete an account so the person can register
+again.
+
 ## 4. Use it
 
 **Hunt by name:** type e.g. `Sony WH-1000XM5` into *Find Deals*. You'll get scored
@@ -241,6 +272,9 @@ means the series reflects today's rate, not the rate on the day each price was s
 
 ## 7. Settings
 
+The first four are easiest to change on the **Admin** page, which overrides these
+environment variables. The variables remain as defaults.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `REFRESH_INTERVAL_HOURS` | 6 | How often tracked sources are re-priced |
@@ -263,6 +297,7 @@ python -m tests.test_search       # matching, URL filtering, throttle detection
 python -m tests.test_currency     # what may be ranked, charted or compared with a target
 python -m tests.test_shop_search  # concurrent shops, block detection, browser start-up
 python -m tests.test_history      # archived prices: matching, filtering, back-off, live-only current price
+python -m tests.test_auth         # accounts, sessions, private products, admin page, CSRF guard
 ```
 
 `test_shop_search` is offline too. Its browser checks run local Chromium against

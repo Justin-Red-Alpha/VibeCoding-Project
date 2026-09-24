@@ -1,12 +1,12 @@
-"""Background job that re-checks all tracked products every REFRESH_INTERVAL_HOURS,
-so the app makes fresh decisions automatically without you clicking anything."""
+"""Background job that re-checks all tracked products every few hours (an admin
+setting, default 6), so the app makes fresh decisions without anyone clicking."""
 
-import os
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from . import site_settings
 from .refresh import refresh_all
 
-REFRESH_INTERVAL_HOURS = float(os.environ.get("REFRESH_INTERVAL_HOURS", "6"))
+REFRESH_JOB_ID = "refresh_all_products"
 
 _scheduler = BackgroundScheduler()
 
@@ -17,10 +17,17 @@ def start_scheduler() -> None:
     _scheduler.add_job(
         refresh_all,
         "interval",
-        hours=REFRESH_INTERVAL_HOURS,
-        id="refresh_all_products",
+        hours=site_settings.refresh_interval_hours(),
+        id=REFRESH_JOB_ID,
     )
     _scheduler.start()
+
+
+def set_refresh_interval(hours: float) -> None:
+    """Apply a new interval to the live job, with no restart. Does nothing if the
+    scheduler was never started (tests, or before startup)."""
+    if _scheduler.get_job(REFRESH_JOB_ID) is not None:
+        _scheduler.reschedule_job(REFRESH_JOB_ID, trigger="interval", hours=hours)
 
 
 def run_once(job_id: str, func, *args) -> None:

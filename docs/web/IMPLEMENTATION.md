@@ -28,12 +28,12 @@
 | route: track | `POST /discover/track` | `app/main.py:track_from_discovery` | built |
 | route: add product | `POST /products` | `app/main.py:create_product` | built |
 | route: add source | `POST /products/{id}/sources` | `app/main.py:create_source` | built |
-| route: set display currency | `POST /settings/currency` | `app/main.py:set_display_currency` | built |
+| route: set display currency | `POST /settings/currency` | `app/account.py:set_display_currency` | built |
 | route: refresh one | `POST /products/{id}/refresh` | `app/main.py:refresh_one` | built |
 | route: look for archived prices | `POST /products/{id}/history` | `app/main.py:lookup_history` | built |
 | history note per listing | `Source → 𝕊` | `app/templates/product.html:history_by_source` | built |
 | archived row marker + link | `PriceSnapshot → HTML` | `app/templates/product.html:origin_ref` | built |
-| route: refresh all | `POST /refresh` | `app/main.py:refresh_everything` | built |
+| route: refresh my prices | `POST /refresh` (own products only) | `app/main.py:refresh_mine` | built |
 | startup | FX + scheduler | `app/main.py:lifespan` | built |
 | JS: render a row | `row → <tr>` | `app/templates/discover.html:makeRow` | built |
 | JS: paint a price | `row → cell` | `app/templates/discover.html:paintPrice` | built |
@@ -51,7 +51,7 @@
 | 5. ≤3 concurrent lookups, streamed | `app/main.py:discover_stream` | `tests/test_shop_search.py:test_price_lookups_run_concurrently` |
 | browser failure becomes an error event | `app/main.py:discover_stream` | `tests/test_shop_search.py:test_browser_failure_becomes_error_event` |
 | 6. target currency validated | `app/main.py:_target_currency` | `tests/test_currency.py:test_forms_store_target_currency` |
-| 6. picker defaults to display currency | `app/templates/_target_price_field.html:current_display_currency` | `tests/test_currency.py:test_forms_default_to_display_currency` |
+| 6. picker defaults to display currency | `app/templates/_target_price_field.html:display_pref` | `tests/test_currency.py:test_forms_default_to_display_currency` |
 | target shown as entered and as compared | `app/templates/product.html:target_display_price` | `tests/test_currency.py:test_product_page_shows_both_figures` |
 | 8. current price is live-only | `app/main.py:_latest_per_source` | `tests/test_history.py:test_current_price_is_live_only` |
 | tracking schedules an archive lookup | `app/main.py:lookup_history` | `tests/test_history.py:test_routes_schedule_lookups` |

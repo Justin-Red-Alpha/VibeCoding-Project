@@ -6,7 +6,7 @@ context: |
   from the supercharge skill. The model of this system lives in docs/: start at
   docs/architecture-map.md, then docs/<component>/ARCHITECTURE.md for the
   component(s) touched. Components: discovery, extraction, browser, storage,
-  analysis, fx, web, refresh, history.
+  analysis, fx, web, refresh, history, auth, settings.
   Every claim must name its object, morphism, location or transmission and map to a
   real file:symbol, a planned item, or an explicit open question. Never invent
   architecture that cannot be grounded.
@@ -14,7 +14,8 @@ context: |
   price; never show a list price; a block never looks like an empty result; never
   rank across currencies; target and history share a currency; the user confirms
   matches; the headline comes only from plausible listings; table rebuilds need
-  both pragmas; archived prices are history, never the current price).
+  both pragmas; archived prices are history, never the current price; every
+  product route goes through auth.product_for; the first account is the admin).
 
 rules:
   design:

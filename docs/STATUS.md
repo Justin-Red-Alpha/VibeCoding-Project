@@ -13,6 +13,8 @@
 | fx | ✅ built | — | — | [fx/STATUS.md](fx/STATUS.md) |
 | web | ✅ built | no target edit form. SSE events not declared once | — | [web/STATUS.md](web/STATUS.md) |
 | refresh | ✅ built | **no offline tests** | — | [refresh/STATUS.md](refresh/STATUS.md) |
+| auth | ✅ built | no password change / reset; in-memory throttle | — | [auth/STATUS.md](auth/STATUS.md) |
+| settings | ✅ built | — | — | [settings/STATUS.md](settings/STATUS.md) |
 | history | 🟡 partial | Amazon only (9 prices live for the WH-1000XM5). Lazada/Shopee need BuyWhere. One suspicious USD 88 capture unchecked | — | [history/STATUS.md](history/STATUS.md) |
 
 ## Cross-cutting

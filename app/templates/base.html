@@ -8,22 +8,33 @@
 </head>
 <body>
     <header class="topbar">
-        <a class="brand" href="/">📉 Price Drop Decision Tracker</a>
-        <div class="topbar-actions">
-            <form method="post" action="/settings/currency" class="currency-form">
-                <label for="cur" class="currency-label">Show prices in</label>
-                <select name="currency" id="cur" onchange="this.form.submit()">
-                    <option value="">As quoted</option>
-                    {% for c in fx_currencies %}
-                        <option value="{{ c }}" {{ 'selected' if current_display_currency() == c }}>{{ c }}</option>
-                    {% endfor %}
-                </select>
-                <input type="hidden" name="next_url" value="{{ request.url.path }}{{ '?' ~ request.url.query if request.url.query else '' }}">
-            </form>
-            <form method="post" action="/refresh">
-                <button type="submit" class="btn btn-secondary">Refresh All Now</button>
-            </form>
-        </div>
+        <a class="brand" href="{{ '/' if user else '/discover' }}">📉 Price Drop Decision Tracker</a>
+        <nav class="topbar-actions">
+            <a class="nav-link" href="/discover">Find deals</a>
+            {% if user %}
+                <a class="nav-link" href="/">My products</a>
+                {% if is_admin %}<a class="nav-link" href="/admin">Admin</a>{% endif %}
+                <form method="post" action="/settings/currency" class="currency-form">
+                    <label for="cur" class="currency-label">Prices in</label>
+                    <select name="currency" id="cur" onchange="this.form.submit()" title="Show prices in">
+                        <option value="">As quoted</option>
+                        {% for c in fx_currencies %}
+                            <option value="{{ c }}" {{ 'selected' if display_pref == c }}>{{ c }}</option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" name="next_url" value="{{ request.url.path }}{{ '?' ~ request.url.query if request.url.query else '' }}">
+                </form>
+                <form method="post" action="/logout" class="account-form">
+                    <span class="signed-in-as" title="Signed in">
+                        {{ user.username }}{% if is_admin %} <span class="role-tag">admin</span>{% endif %}
+                    </span>
+                    <button type="submit" class="btn-link">Sign out</button>
+                </form>
+            {% else %}
+                <a class="btn btn-secondary" href="/login?next={{ (request.url.path ~ ('?' ~ request.url.query if request.url.query else ''))|urlencode }}">Log in</a>
+                <a class="btn btn-primary" href="/register">Register</a>
+            {% endif %}
+        </nav>
     </header>
     <main>
         {% block content %}{% endblock %}

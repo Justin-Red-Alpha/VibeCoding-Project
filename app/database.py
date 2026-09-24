@@ -12,6 +12,27 @@ from datetime import datetime, timezone
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "app.db"
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    -- scrypt$n$r$p$salt$hash; never the password itself.
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+    -- Personal "Show prices in"; NULL = the site default.
+    display_currency TEXT,
+    disabled_at TEXT,
+    created_at TEXT NOT NULL
+);
+
+-- One row per signed-in browser. Only a hash of the cookie's token is stored,
+-- so a copy of this file can't be used to sign in.
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -19,7 +40,9 @@ CREATE TABLE IF NOT EXISTS products (
     -- NULL means "in the product's own currency" (the pre-choice behaviour).
     target_currency TEXT,
     currency TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- Who tracks it. NULL = from before accounts; the first admin claims those.
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS sources (
@@ -146,15 +169,19 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
     won't add them to an old database. ADD COLUMN doesn't rebuild the table, so
     the foreign-key cascade trap above doesn't apply here."""
     additions = {
-        "products": ["target_currency"],
-        "sources": ["history_checked_at", "history_note"],
-        "price_snapshots": ["origin", "origin_ref"],
+        "products": {
+            "target_currency": "TEXT",
+            # ADD COLUMN may carry a REFERENCES clause as long as it defaults to NULL.
+            "user_id": "INTEGER REFERENCES users(id) ON DELETE CASCADE",
+        },
+        "sources": {"history_checked_at": "TEXT", "history_note": "TEXT"},
+        "price_snapshots": {"origin": "TEXT", "origin_ref": "TEXT"},
     }
     for table, columns in additions.items():
         existing = _columns(conn, table)
-        for column in columns:
+        for column, definition in columns.items():
             if column not in existing:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def init_db() -> None:
@@ -179,12 +206,13 @@ def add_product(
     target_price: float | None,
     currency: str | None = None,
     target_currency: str | None = None,
+    user_id: int | None = None,
 ) -> int:
     conn = get_connection()
     cur = conn.execute(
-        "INSERT INTO products (name, target_price, target_currency, currency, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (name, target_price, target_currency, currency, now_iso()),
+        "INSERT INTO products (name, target_price, target_currency, currency, created_at, user_id) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (name, target_price, target_currency, currency, now_iso(), user_id),
     )
     conn.commit()
     product_id = cur.lastrowid
@@ -193,8 +221,18 @@ def add_product(
 
 
 def get_products() -> list[sqlite3.Row]:
+    """Every product of every user: for the scheduler and admin maintenance only."""
     conn = get_connection()
     rows = conn.execute("SELECT * FROM products ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return rows
+
+
+def get_products_for_user(user_id: int) -> list[sqlite3.Row]:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM products WHERE user_id = ? ORDER BY created_at DESC", (user_id,)
+    ).fetchall()
     conn.close()
     return rows
 
@@ -348,6 +386,154 @@ def get_latest_snapshot(source_id: int) -> sqlite3.Row | None:
     ).fetchone()
     conn.close()
     return row
+
+
+# --- users and sessions --------------------------------------------------
+
+class UsernameTaken(Exception):
+    pass
+
+
+def create_user(username: str, password_hash: str) -> tuple[int, str]:
+    """Insert a user and return (id, role). The very first user is the admin and
+    takes ownership of every product created before accounts existed.
+
+    BEGIN IMMEDIATE takes the write lock before counting, so two first sign-ups
+    racing each other can't both see zero users and both become admin.
+    """
+    conn = get_connection()
+    conn.isolation_level = None  # we manage the transaction ourselves
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        role = "admin" if existing == 0 else "user"
+        try:
+            cur = conn.execute(
+                "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                (username, password_hash, role, now_iso()),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise UsernameTaken(username) from exc
+        user_id = cur.lastrowid
+        if role == "admin":
+            conn.execute("UPDATE products SET user_id = ? WHERE user_id IS NULL", (user_id,))
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+    return user_id, role
+
+
+def count_users() -> int:
+    conn = get_connection()
+    count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    conn.close()
+    return count
+
+
+def get_user(user_id: int) -> sqlite3.Row | None:
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def get_user_by_name(username: str) -> sqlite3.Row | None:
+    """Case-insensitive: the column is COLLATE NOCASE."""
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    conn.close()
+    return row
+
+
+def list_users() -> list[sqlite3.Row]:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT u.*, (SELECT COUNT(*) FROM products p WHERE p.user_id = u.id) AS product_count "
+        "FROM users u ORDER BY u.created_at ASC"
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def count_enabled_admins() -> int:
+    conn = get_connection()
+    count = conn.execute(
+        "SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled_at IS NULL"
+    ).fetchone()[0]
+    conn.close()
+    return count
+
+
+def set_user_role(user_id: int, role: str) -> None:
+    conn = get_connection()
+    conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+    conn.commit()
+    conn.close()
+
+
+def set_user_disabled(user_id: int, disabled: bool) -> None:
+    conn = get_connection()
+    conn.execute("UPDATE users SET disabled_at = ? WHERE id = ?",
+                 (now_iso() if disabled else None, user_id))
+    conn.commit()
+    conn.close()
+
+
+def delete_user(user_id: int) -> None:
+    """Cascades to the user's products (and their sources and snapshots) and sessions."""
+    conn = get_connection()
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def set_user_currency(user_id: int, currency: str | None) -> None:
+    conn = get_connection()
+    conn.execute("UPDATE users SET display_currency = ? WHERE id = ?", (currency, user_id))
+    conn.commit()
+    conn.close()
+
+
+def add_session(token_hash: str, user_id: int, expires_at: str) -> None:
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        (token_hash, user_id, now_iso(), expires_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_session(token_hash: str) -> sqlite3.Row | None:
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM sessions WHERE token_hash = ?", (token_hash,)).fetchone()
+    conn.close()
+    return row
+
+
+def delete_session(token_hash: str) -> None:
+    conn = get_connection()
+    conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+    conn.commit()
+    conn.close()
+
+
+def delete_user_sessions(user_id: int) -> None:
+    conn = get_connection()
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def delete_expired_sessions(now: str) -> None:
+    conn = get_connection()
+    conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
+    conn.commit()
+    conn.close()
 
 
 # --- settings ----------------------------------------------------------

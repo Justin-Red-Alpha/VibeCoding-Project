@@ -22,12 +22,14 @@ placed on four threads, with code that assumed only one.
 **Dat**
 | Object | Shape | Lives at |
 | --- | --- | --- |
-| `Product` | name, target_price?, target_currency?, currency? | SQLite |
+| `User` | username, password hash, `role ∈ {user, admin}`, display_currency?, disabled? | SQLite |
+| `Session` | sha256(token) → user, expiry | SQLite (hash); raw token only in the browser cookie |
+| `Product` | name, target_price?, target_currency?, currency?, `owner? → User` | SQLite |
 | `Source` | one shop's listing of a product: url, retailer, price_selector? | SQLite |
 | `PriceSnapshot` | success ⊕ failure: price?/currency?/strategy? or error; `origin?` marks an archived observation | SQLite. In RAM as `PriceResult` ⊕ `ScrapeError` (live) or `Observation` (archived) |
 | `Adapter` | per-shop knowledge, with site search as partial morphisms | code (`ADAPTERS`) |
 | `Candidate` | a search hit with its score, flags and price? | RAM (transient) |
-| `FxRate`, `Setting` | USD-based rate cache; display currency | SQLite |
+| `FxRate`, `Setting` | USD-based rate cache; site settings (default currency, shops, refresh interval, limits, history pause) | SQLite |
 | `Comparison`, `SourcePrice`, `Verdict`, series | **deduced** views, never stored | RAM, per request |
 | `SseEvent*` | `(shop ⊕ price ⊕ note ⊕ error ⊕ done)*` | on the wire to the page |
 
@@ -58,7 +60,8 @@ placed on four threads, with code that assumed only one.
 **Trm**
 | Trm | carries | c_from → c_to |
 | --- | --- | --- |
-| `t_page`, `t_form` | HTML / form fields | ServerProc ⇄ UserBrowser |
+| `t_page`, `t_form` | HTML / form fields (cross-site POSTs refused) | ServerProc ⇄ UserBrowser |
+| `t_cookie` | opaque session token (HttpOnly, SameSite=Lax) | UserBrowser → ServerProc |
 | `t_sse` | `SseEvent*` | ServerProc → UserBrowser |
 | `t_shop_http` | product-page HTML | Shop → ServerProc |
 | `t_cdp` | commands, page HTML, card rows | ServerProc ⇄ Chromium |
@@ -81,7 +84,9 @@ placed on four threads, with code that assumed only one.
 | `fx` | convert, make_converter, refresh_rates | when converting | [fx/ARCHITECTURE.md](fx/ARCHITECTURE.md) |
 | `web` | routes, SSE stream, views, page JS | always | [web/ARCHITECTURE.md](web/ARCHITECTURE.md) |
 | `refresh` | refresh_source/product/all, scheduler | on demand + every 6 h | [refresh/ARCHITECTURE.md](refresh/ARCHITECTURE.md) |
-| `history` | archive_urls, wayback_lookup, filter_observations, backfill_source | after tracking a listing; on the button | [history/ARCHITECTURE.md](history/ARCHITECTURE.md) |
+| `history` | archive_urls, wayback_lookup, filter_observations, backfill_source | after tracking a listing; on the button (unless paused) | [history/ARCHITECTURE.md](history/ARCHITECTURE.md) |
+| `auth` | register, authenticate, sessions, require_user/admin, product_for, admin user actions | every request (public: search, login, register) | [auth/ARCHITECTURE.md](auth/ARCHITECTURE.md) |
+| `settings` | effective site settings, validated setters, live reschedule | per search / refresh / admin save | [settings/ARCHITECTURE.md](settings/ARCHITECTURE.md) |
 
 The pipeline, read left to right, is `discovery → extraction → storage →
 analysis → web`, with `fx` plugged into `analysis` as an adapter for its
@@ -117,7 +122,9 @@ conversion port, and `browser` beneath discovery and extraction.
   setup. (This failed until 2026-09-24.)
 
 ## 6. Modeling smells swept (§3)
-- **No parallel objects.** Archived prices are `PriceSnapshot`s with `origin?`,
+- **No parallel objects.** "Admin" is a `User` with `role = admin`, not an
+  admins table (the §3 check in `auth/ARCHITECTURE.md`). Archived prices are
+  `PriceSnapshot`s with `origin?`,
   not a history table (the §3 reduction in `history/ARCHITECTURE.md`). `Adapter`
   folds site search into partial morphisms.
   `PriceResult` is a `DataLoc` of `PriceSnapshot`, not a twin. `Candidate` vs

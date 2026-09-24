@@ -86,10 +86,10 @@ def _looks_throttled(status_code: int, html: str) -> bool:
 
 
 def search_domains() -> list[str]:
-    configured = os.environ.get("SEARCH_DOMAINS", "").strip()
-    if configured:
-        return [d.strip() for d in configured.split(",") if d.strip()]
-    return DEFAULT_SEARCH_DOMAINS
+    """The shops deal search covers: the admin's choice, else SEARCH_DOMAINS, else
+    every adapter's search domain. Read per search, so changes apply at once."""
+    from .. import site_settings
+    return site_settings.search_domains()
 
 
 def available_providers() -> list[str]:

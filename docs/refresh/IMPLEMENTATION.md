@@ -6,7 +6,9 @@
 | Object | Form / shape | Realised at | State |
 | --- | --- | --- | --- |
 | politeness gap | `1.5 s` | `app/refresh.py:DELAY_BETWEEN_REQUESTS` | built |
-| schedule interval | `REFRESH_INTERVAL_HOURS` env var, default 6 | `app/scheduler.py:REFRESH_INTERVAL_HOURS` | built |
+| schedule interval | admin setting (1–168 h), else `REFRESH_INTERVAL_HOURS` env, else 6 | `app/site_settings.py:refresh_interval_hours` | built |
+| apply a new interval live | `hours → ()` | `app/scheduler.py:set_refresh_interval` | built |
+| one user's products | `ProductId* → PriceSnapshot*` | `app/refresh.py:refresh_products` | built |
 
 ## Morphisms (Trn / relations) → code
 | Morphism | Signature | Realising code | State |

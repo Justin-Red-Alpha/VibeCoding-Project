@@ -296,6 +296,10 @@ def backfill_product(product_id: int, only_unchecked: bool = False) -> None:
 
 
 def schedule_backfill(product_id: int, only_unchecked: bool = True) -> None:
-    """Run the lookup in the background: at most one per product at a time."""
+    """Run the lookup in the background: at most one per product at a time.
+    Does nothing while an admin has archive lookups paused."""
+    from . import site_settings
+    if site_settings.history_paused():
+        return
     from .scheduler import run_once
     run_once(f"history-{product_id}", backfill_product, product_id, only_unchecked)

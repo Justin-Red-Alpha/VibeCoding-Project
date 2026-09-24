@@ -37,7 +37,14 @@
 </section>
 
 <section>
-    <h2>Tracked products</h2>
+    <div class="section-head">
+        <h2>My products</h2>
+        {% if views %}
+        <form method="post" action="/refresh">
+            <button type="submit" class="btn btn-secondary" title="Re-check every product you track">Refresh my prices</button>
+        </form>
+        {% endif %}
+    </div>
     {% if not views %}
         <p class="hint">Nothing tracked yet — add a product above.</p>
     {% endif %}

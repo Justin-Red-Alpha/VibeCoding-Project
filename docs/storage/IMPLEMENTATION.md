@@ -12,6 +12,9 @@
 | `PriceSnapshot` | `price_snapshots(id, source_id, price, currency, strategy, fetched_at, error)` | `app/database.py:SCHEMA` | built |
 | `Setting` | `settings(key, value)` | `app/database.py:SCHEMA` | built |
 | `FxRate` | `fx_rates(base, quote, rate, fetched_at)` | `app/database.py:SCHEMA` | built |
+| `User` | `users(...)` (see auth) | `app/database.py:get_user_by_name` | built |
+| `Session` | `sessions(token_hash, user_id, expires_at)` | `app/database.py:get_session` | built |
+| `owner?` | `products.user_id → users.id` (ON DELETE CASCADE) | `app/database.py:delete_user` | built |
 
 ## Morphisms (Trn / relations) → code
 | Morphism | Signature | Realising code | State |

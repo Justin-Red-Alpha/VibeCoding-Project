@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Log in — Price Drop Decision Tracker{% endblock %}
+{% block content %}
+<section class="card auth-card">
+    <h2>Log in</h2>
+    {% if signed_out %}<p class="notice">You're signed out.</p>{% endif %}
+    {% if first_account %}
+        <p class="notice notice-warning">
+            No accounts exist yet. <a href="/register?next={{ next|urlencode }}">Register</a> first:
+            the first account becomes the site's admin.
+        </p>
+    {% endif %}
+    {% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+    <form method="post" action="/login" class="auth-form">
+        <input type="hidden" name="next" value="{{ next }}">
+        <label>Username
+            <input type="text" name="username" value="{{ username }}" autocomplete="username" required autofocus>
+        </label>
+        <label>Password
+            <input type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit" class="btn btn-primary">Log in</button>
+    </form>
+    <p class="hint">No account? <a href="/register?next={{ next|urlencode }}">Register</a>
+        · or <a href="/discover">search deals</a> without one.</p>
+</section>
+{% endblock %}

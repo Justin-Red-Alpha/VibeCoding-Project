@@ -16,6 +16,8 @@
 | web | `app/main.py`, `app/templates/`, `app/static/` | [web/ARCHITECTURE.md](web/ARCHITECTURE.md) | [web/IMPLEMENTATION.md](web/IMPLEMENTATION.md) |
 | refresh | `app/refresh.py`, `app/scheduler.py` | [refresh/ARCHITECTURE.md](refresh/ARCHITECTURE.md) | [refresh/IMPLEMENTATION.md](refresh/IMPLEMENTATION.md) |
 | history | `app/history.py` | [history/ARCHITECTURE.md](history/ARCHITECTURE.md) | [history/IMPLEMENTATION.md](history/IMPLEMENTATION.md) |
+| auth | `app/auth.py`, `app/account.py`, `app/admin.py` (users) | [auth/ARCHITECTURE.md](auth/ARCHITECTURE.md) | [auth/IMPLEMENTATION.md](auth/IMPLEMENTATION.md) |
+| settings | `app/site_settings.py`, `app/admin.py` (settings, maintenance) | [settings/ARCHITECTURE.md](settings/ARCHITECTURE.md) | [settings/IMPLEMENTATION.md](settings/IMPLEMENTATION.md) |
 
 ## Shared objects (one Dat, DataLocs in ≥2 components)
 | Object | Authoritative at | Also read by | Realised at |
@@ -50,7 +52,9 @@
 | HTTP `GET /discover/stream` | `search_all` → price lookups → summary | `app/main.py:discover_stream` |
 | HTTP `POST /discover/track` | `add_product`, `add_source`, `refresh_product` | `app/main.py:track_from_discovery` |
 | HTTP `POST /products` | `add_product`, `add_source`, `refresh_product` | `app/main.py:create_product` |
-| HTTP `POST /settings/currency` | `set_setting`, `refresh_rates` | `app/main.py:set_display_currency` |
+| HTTP `POST /settings/currency` | `set_user_currency` (own preference), `refresh_rates` | `app/account.py:set_display_currency` |
+| HTTP `GET`/`POST /register`, `/login`; `POST /logout` | `register`, `authenticate`, sessions | `app/account.py:login` |
+| HTTP `GET /admin` + `POST /admin/…` | user actions, settings, maintenance | `app/admin.py:admin_page` |
 | HTTP `POST /products/{id}/history` | `schedule_backfill` (all listings) | `app/main.py:lookup_history` |
 | one-off job `history-<id>` | `backfill_product` | `app/scheduler.py:run_once` |
 | scheduler (every 6 h) | `refresh_all` | `app/scheduler.py:start_scheduler` |

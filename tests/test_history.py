@@ -415,10 +415,10 @@ def test_verdict_uses_archived_history():
 
 
 def _client():
-    from fastapi.testclient import TestClient
+    """Signed in as the site's first account (the admin, who may see every product)."""
     from app import main
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    return TestClient(main.app, follow_redirects=False), main
+    from tests import helpers
+    return helpers.client("owner"), main
 
 
 def test_routes_schedule_lookups():

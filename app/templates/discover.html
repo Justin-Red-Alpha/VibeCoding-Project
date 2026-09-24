@@ -2,7 +2,7 @@
 {% block title %}{{ query or "Find deals" }} — Price Drop Decision Tracker{% endblock %}
 {% block content %}
 
-<a href="/" class="back-link">← All products</a>
+{% if user %}<a href="/" class="back-link">← My products</a>{% endif %}
 
 <section class="card">
     <h2>Hunt for a deal</h2>
@@ -74,6 +74,7 @@
 
 <section class="card">
     <h3>Track the ones you ticked</h3>
+    {% if user %}
     <div class="add-source-form track-form">
         <input type="text" name="name" value="{{ query }}" placeholder="Product name" required>
         {% include "_target_price_field.html" %}
@@ -84,6 +85,13 @@
         BUY / WAIT verdict as the price moves. "Shop's currency" means the currency of the
         first selected listing that reports one.
     </p>
+    {% else %}
+    <p class="notice">
+        <a href="/login?next={{ ('/discover?q=' ~ query)|urlencode }}">Log in</a> or
+        <a href="/register?next={{ ('/discover?q=' ~ query)|urlencode }}">register</a> to track these
+        and get a BUY / WAIT verdict as prices move. Searching stays free without an account.
+    </p>
+    {% endif %}
 </section>
 </form>
 

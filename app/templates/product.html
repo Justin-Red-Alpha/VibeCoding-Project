@@ -2,7 +2,7 @@
 {% block title %}{{ product.name }} — Price Drop Decision Tracker{% endblock %}
 {% block content %}
 
-<a href="/" class="back-link">← All products</a>
+<a href="/" class="back-link">← My products</a>
 
 <section class="card">
     <div class="product-card-head">
@@ -11,6 +11,9 @@
             {{ verdict.label|replace('_', ' ') }}
         </span>
     </div>
+    {% if user and owner and owner.id != user.id %}
+        <p class="notice">Tracked by <strong>{{ owner.username }}</strong>. You can see it because you're an admin.</p>
+    {% endif %}
 
     {% if comparison.cheapest and comparison.cheapest.comparable_price is not none %}
         <div class="best-price">
@@ -82,12 +85,14 @@
         <form method="post" action="/products/{{ product.id }}/refresh">
             <button type="submit" class="btn btn-secondary">Refresh All Sources</button>
         </form>
+        {% if not history_paused %}
         <form method="post" action="/products/{{ product.id }}/history">
             <button type="submit" class="btn btn-secondary"
                     title="Search the Internet Archive for this listing's past prices (runs in the background)">
                 Look for archived prices
             </button>
         </form>
+        {% endif %}
         <form method="post" action="/products/{{ product.id }}/delete" onsubmit="return confirm('Stop tracking this product?');">
             <button type="submit" class="btn btn-danger">Delete Product</button>
         </form>
@@ -110,7 +115,9 @@
                     <a class="source-url" href="{{ s.url }}" target="_blank" rel="noopener">{{ s.url|truncate(60) }}</a>
                     {% set h = history_by_source.get(s.source_id) %}
                     <span class="history-note">
-                        {% if h and h.note %}{{ h.note }}{% else %}Archived prices: not looked up yet.{% endif %}
+                        {% if h and h.note %}{{ h.note }}
+                        {% elif history_paused %}Archived prices: lookups are paused by an admin.
+                        {% else %}Archived prices: not looked up yet.{% endif %}
                     </span>
                 </td>
                 <td class="price-cell">

@@ -48,6 +48,14 @@ def refresh_product(product_id: int) -> None:
         refresh_source(source["id"])
 
 
+def refresh_products(product_ids: list[int]) -> None:
+    """Several products (one user's), with the same polite gap between shops."""
+    for index, product_id in enumerate(product_ids):
+        if index:
+            time.sleep(DELAY_BETWEEN_REQUESTS)
+        refresh_product(product_id)
+
+
 def refresh_all() -> None:
     sources = db.get_all_sources()
     for index, source in enumerate(sources):

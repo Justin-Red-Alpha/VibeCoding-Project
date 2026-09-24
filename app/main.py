@@ -1,35 +1,36 @@
 import json
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request, HTTPException
-from fastapi.responses import RedirectResponse, StreamingResponse
+from urllib.parse import quote, urlparse
+
+from fastapi import Depends, FastAPI, Form, Request, HTTPException
+from fastapi.responses import PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from starlette.status import HTTP_303_SEE_OTHER
 
+from . import auth
 from . import database as db
 from . import fx
 from . import history
-from .adapters import ADAPTERS, adapter_for
+from . import site_settings
+from .account import router as account_router
+from .admin import router as admin_router
+from .adapters import adapter_for
+from .templating import display_currency_for, templates
 from .browser import BrowserUnavailable
 from .analysis import analyze, best_price_series, compare_sources, dominant_currency, target_in
-from .refresh import refresh_all, refresh_product, refresh_source
+from .refresh import refresh_product, refresh_products, refresh_source
 from .scheduler import start_scheduler, stop_scheduler
 from .scraper import ScrapeError, fetch_price
 from .search import discover, flag_price_outliers
 from .search import site_search
 from .search.providers import SearchUnavailable, search_domains
 
-# How many discovered listings we actually fetch prices for. Each fetch is a real
-# page load (and a browser render for shops like Lazada), so this is the main
-# thing standing between a useful page and a 60-second wait.
-DISCOVER_PRICE_LIMIT = int(os.environ.get("DISCOVER_PRICE_LIMIT", "6"))
-# Listings kept per shop. Search pages return dozens; only the best few are useful.
-DISCOVER_PER_SHOP = int(os.environ.get("DISCOVER_PER_SHOP", "6"))
+# Discovery limits (listings kept per shop, missing prices looked up per search)
+# are admin settings now: see site_settings.discover_per_shop / discover_price_limit.
 # Product pages fetched at once for listings whose search card had no price.
 # Small on purpose: roughly a person opening three tabs on the same shop.
 PRICE_LOOKUP_CONCURRENCY = 3
@@ -55,14 +56,46 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
+class SameSitePostGuard:
+    """Refuse state-changing requests that another website made the browser send.
+
+    SameSite=Lax cookies are the main defence; this is the second. A browser always
+    sends Origin (or at least Referer) on a cross-site form post, so if either names
+    a different host, it's refused. Requests with neither (curl, tests) pass.
+    Pure ASGI rather than @app.middleware, so the SSE stream is never buffered.
+    """
+
+    UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["method"] in self.UNSAFE:
+            headers = {k.decode("latin-1").lower(): v.decode("latin-1")
+                       for k, v in scope["headers"]}
+            source = headers.get("origin") or headers.get("referer")
+            if source is not None:
+                host = urlparse(source).netloc if source != "null" else "null"
+                if host != headers.get("host", ""):
+                    response = PlainTextResponse(
+                        "Refused: this form was submitted from another website.", status_code=403)
+                    await response(scope, receive, send)
+                    return
+        await self.app(scope, receive, send)
+
+
 app = FastAPI(title="Price Drop Decision Tracker", lifespan=lifespan)
+app.add_middleware(SameSitePostGuard)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-templates.env.globals["known_retailers"] = [a.name for a in ADAPTERS]
-templates.env.globals["fx_currencies"] = fx.DISPLAY_CURRENCIES
-# Callables so every render sees the current setting without each route passing it.
-templates.env.globals["current_display_currency"] = lambda: db.get_setting("display_currency")
-templates.env.globals["fx_rates_age_hours"] = fx.rates_age_hours
+app.include_router(account_router)
+app.include_router(admin_router)
+
+
+@app.exception_handler(auth.LoginRequired)
+def _to_login(request: Request, exc: auth.LoginRequired):
+    return RedirectResponse(url=f"/login?next={quote(auth.local_path(exc.next_path))}",
+                            status_code=HTTP_303_SEE_OTHER)
 
 
 def _latest_per_source(snapshots) -> dict:
@@ -93,18 +126,19 @@ def _latest_per_source(snapshots) -> dict:
     return latest
 
 
-def display_currency() -> str | None:
-    """The currency the user asked to see prices in, if any and if we have rates."""
-    chosen = db.get_setting("display_currency")
+def display_currency(user=None) -> str | None:
+    """The currency this visitor sees prices in (their own choice, else the site
+    default), and only if we have rates to convert with."""
+    chosen = display_currency_for(user)
     return chosen if chosen and fx.available() else None
 
 
-def _product_view(product) -> dict:
+def _product_view(product, user=None) -> dict:
     sources = db.get_sources(product["id"])
     snapshots = db.get_snapshots_for_product(product["id"])
     currency = product["currency"] or dominant_currency(snapshots)
 
-    shown_in = display_currency()
+    shown_in = display_currency(user)
     to_display = fx.make_converter(shown_in)
 
     comparison = compare_sources(
@@ -145,23 +179,15 @@ def _product_view(product) -> dict:
 
 
 @app.get("/")
-def dashboard(request: Request):
-    views = [_product_view(p) for p in db.get_products()]
+def dashboard(request: Request, user=Depends(auth.require_user)):
+    """Only the signed-in user's own products (admins included)."""
+    views = [_product_view(p, user) for p in db.get_products_for_user(user["id"])]
     return templates.TemplateResponse("index.html", {"request": request, "views": views})
-
-
-@app.post("/settings/currency")
-def set_display_currency(currency: str = Form(""), next_url: str = Form("/")):
-    """Pick the currency prices are compared and shown in ('' = leave as quoted)."""
-    choice = currency.strip().upper()
-    db.set_setting("display_currency", choice or None)
-    if choice:
-        fx.refresh_rates()
-    return RedirectResponse(url=next_url or "/", status_code=HTTP_303_SEE_OTHER)
 
 
 @app.get("/discover")
 def discover_page(request: Request, q: str = ""):
+    """Public: anyone may search. Tracking the results needs an account."""
     """Render matches straight away; prices stream in afterwards via /discover/stream.
 
     Pricing is the slow part (browser renders take seconds each), so blocking the
@@ -182,9 +208,9 @@ def discover_page(request: Request, q: str = ""):
             "request": request,
             "query": query,
             "shops": shops,
-            "price_limit": DISCOVER_PRICE_LIMIT,
+            "price_limit": site_settings.discover_price_limit(),
             "searched_domains": domains,
-            "display_currency": display_currency(),
+            "display_currency": display_currency(auth.current_user(request)),
             "browser_available": site_search.playwright_available(),
         },
     )
@@ -209,14 +235,20 @@ def _candidate_row(candidate, shown_in: str | None) -> dict:
 
 
 @app.get("/discover/stream")
-def discover_stream(q: str = ""):
+def discover_stream(request: Request, q: str = ""):
     """Server-sent events, one message per shop as that shop's search finishes,
     then a summary.
 
     Each shop is searched on its own search page, so results arrive site by site
     and you can read one shop while the next is still loading. Ranking, conversion
     and outlier rules stay here rather than being reimplemented in JavaScript.
+    Public, like the search page: the visitor's currency is theirs if signed in,
+    else the site default.
     """
+    # Settled now, in the request, not later inside the generator.
+    shown_in = display_currency(auth.current_user(request))
+    per_shop = site_settings.discover_per_shop()
+    price_limit = site_settings.discover_price_limit()
 
     def events():
         query = q.strip()
@@ -224,7 +256,6 @@ def discover_stream(q: str = ""):
             yield _sse({"type": "done", "priced": 0})
             return
 
-        shown_in = display_currency()
         domains = search_domains()
         found: list = []
 
@@ -233,7 +264,7 @@ def discover_stream(q: str = ""):
         if use_site_search:
             try:
                 for domain, retailer, candidates, error in site_search.search_all(
-                    query, domains, per_shop=DISCOVER_PER_SHOP
+                    query, domains, per_shop=per_shop
                 ):
                     rows = []
                     for candidate in candidates:
@@ -271,7 +302,7 @@ def discover_stream(q: str = ""):
         # A few at a time, each shown as it lands: one at a time was ~2 s per
         # listing in a row. Candidates are only touched here, never in a worker.
         missing = [c for c in sorted(found, key=lambda c: c.score, reverse=True)
-                   if c.price is None][:DISCOVER_PRICE_LIMIT]
+                   if c.price is None][:price_limit]
         pool = ThreadPoolExecutor(max_workers=PRICE_LOOKUP_CONCURRENCY)
         try:
             lookups = {pool.submit(fetch_price, c.url, timeout=30): c for c in missing}
@@ -386,15 +417,17 @@ def track_from_discovery(
     urls: list[str] = Form(default=[]),
     target_price: str = Form(""),
     target_currency: str = Form(""),
+    user=Depends(auth.require_user),
 ):
-    """Turn the listings the user confirmed into a tracked product."""
+    """Turn the listings the user confirmed into a product they track."""
     chosen = [u for u in urls if u.strip()]
     if not chosen:
         return RedirectResponse(url="/discover", status_code=HTTP_303_SEE_OTHER)
 
     target = float(target_price) if target_price.strip() else None
     currency = _target_currency(target, target_currency)
-    product_id = db.add_product(name=name, target_price=target, target_currency=currency)
+    product_id = db.add_product(name=name, target_price=target, target_currency=currency,
+                                user_id=user["id"])
     for url in chosen:
         db.add_source(product_id, url=url, price_selector=None)
     refresh_product(product_id)
@@ -409,10 +442,12 @@ def create_product(
     price_selector: str = Form(""),
     target_price: str = Form(""),
     target_currency: str = Form(""),
+    user=Depends(auth.require_user),
 ):
     target = float(target_price) if target_price.strip() else None
     currency = _target_currency(target, target_currency)
-    product_id = db.add_product(name=name, target_price=target, target_currency=currency)
+    product_id = db.add_product(name=name, target_price=target, target_currency=currency,
+                                user_id=user["id"])
     db.add_source(product_id, url=url, price_selector=price_selector.strip() or None)
     refresh_product(product_id)  # fetch an initial price right away
     history.schedule_backfill(product_id)  # past prices, in the background
@@ -420,9 +455,9 @@ def create_product(
 
 
 @app.post("/products/{product_id}/sources")
-def create_source(product_id: int, url: str = Form(...), price_selector: str = Form("")):
-    if db.get_product(product_id) is None:
-        raise HTTPException(status_code=404, detail="Product not found")
+def create_source(product_id: int, url: str = Form(...), price_selector: str = Form(""),
+                  user=Depends(auth.require_user)):
+    auth.product_for(user, product_id)  # someone else's product is a 404
     source_id = db.add_source(product_id, url=url, price_selector=price_selector.strip() or None)
     refresh_source(source_id)
     history.schedule_backfill(product_id)  # only the new listing: others are already checked
@@ -430,39 +465,39 @@ def create_source(product_id: int, url: str = Form(...), price_selector: str = F
 
 
 @app.post("/products/{product_id}/history")
-def lookup_history(product_id: int):
+def lookup_history(product_id: int, user=Depends(auth.require_user)):
     """Re-check the price archive for every listing of this product."""
-    if db.get_product(product_id) is None:
-        raise HTTPException(status_code=404, detail="Product not found")
+    auth.product_for(user, product_id)
     history.schedule_backfill(product_id, only_unchecked=False)
     return RedirectResponse(url=f"/product/{product_id}", status_code=HTTP_303_SEE_OTHER)
 
 
 @app.post("/sources/{source_id}/delete")
-def remove_source(source_id: int):
-    source = db.get_source(source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail="Source not found")
-    product_id = source["product_id"]
+def remove_source(source_id: int, user=Depends(auth.require_user)):
+    source = auth.source_for(user, source_id)
     db.delete_source(source_id)
-    return RedirectResponse(url=f"/product/{product_id}", status_code=HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=f"/product/{source['product_id']}", status_code=HTTP_303_SEE_OTHER)
 
 
 @app.post("/products/{product_id}/delete")
-def remove_product(product_id: int):
+def remove_product(product_id: int, user=Depends(auth.require_user)):
+    auth.product_for(user, product_id)
     db.delete_product(product_id)
     return RedirectResponse(url="/", status_code=HTTP_303_SEE_OTHER)
 
 
 @app.post("/products/{product_id}/refresh")
-def refresh_one(product_id: int):
+def refresh_one(product_id: int, user=Depends(auth.require_user)):
+    auth.product_for(user, product_id)
     refresh_product(product_id)
     return RedirectResponse(url=f"/product/{product_id}", status_code=HTTP_303_SEE_OTHER)
 
 
 @app.post("/refresh")
-def refresh_everything():
-    refresh_all()
+def refresh_mine(user=Depends(auth.require_user)):
+    """The top bar's "Refresh my prices": the signed-in user's products only. An
+    admin refreshes everyone's from the admin page."""
+    refresh_products([p["id"] for p in db.get_products_for_user(user["id"])])
     return RedirectResponse(url="/", status_code=HTTP_303_SEE_OTHER)
 
 
@@ -487,12 +522,10 @@ def _chart_points(snapshots, shown_in: str | None, primary_currency: str | None,
 
 
 @app.get("/product/{product_id}")
-def product_detail(request: Request, product_id: int):
-    product = db.get_product(product_id)
-    if product is None:
-        raise HTTPException(status_code=404, detail="Product not found")
+def product_detail(request: Request, product_id: int, user=Depends(auth.require_user)):
+    product = auth.product_for(user, product_id)
 
-    view = _product_view(product)
+    view = _product_view(product, user)
     sources = db.get_sources(product_id)
 
     # Colour is assigned by source in creation order and never cycled, so the dot
@@ -534,5 +567,7 @@ def product_detail(request: Request, product_id: int):
             "color_index": color_index,
             "per_source_series": per_source_series,
             "snapshots": list(reversed(db.get_snapshots_for_product(product_id))),
+            "history_paused": site_settings.history_paused(),
+            "owner": db.get_user(product["user_id"]) if product["user_id"] else None,
         },
     )

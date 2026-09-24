@@ -356,12 +356,14 @@ def test_chart_points():
 # --- forms and pages ------------------------------------------------------------
 
 def _client():
-    """Not used as a context manager, so the app's startup (FX download, scheduler)
-    never runs. Refreshing a new product would fetch real shop pages: stub it."""
-    from fastapi.testclient import TestClient
-    logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per request otherwise
+    """Signed in as the site's first account (the admin), which may see every product.
+    Not used as a context manager, so the app's startup (FX download, scheduler)
+    never runs. Refreshing a new product would fetch real shop pages: stub it, and
+    the archive lookup too."""
+    from tests import helpers
     main.refresh_product = lambda product_id: None
-    return TestClient(main.app, follow_redirects=False)
+    main.history.schedule_backfill = lambda *a, **k: None
+    return helpers.client("owner")
 
 
 def _product_count():
