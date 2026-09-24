@@ -25,6 +25,8 @@
 | `shopee_ids` | `Url → (shop, item)?` | `app/adapters.py:shopee_ids` | built |
 | `fetch_price?` | `Url → PriceResult` ⊸ | `app/scraper.py:fetch_price` | built |
 | `extract?` | `Html → PriceResult?` | `app/scraper.py:_extract` | built |
+| never-render entry (archived HTML) | `Html × Url → PriceResult?` | `app/scraper.py:extract_from_html` | built |
+| item id + canonical path | `Adapter × Url → Url?` | `app/adapters.py:item_id_re` | built |
 | strategy: user selector | `Html → 𝕊?` | `app/scraper.py:_from_selector` | built |
 | strategy: JSON-LD | `Html → (𝕊, Currency?)?` | `app/scraper.py:_from_json_ld` | built |
 | strategy: meta tags | `Html → (𝕊, Currency?)?` | `app/scraper.py:_from_meta` | built |

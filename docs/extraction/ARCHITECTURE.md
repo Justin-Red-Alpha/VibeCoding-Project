@@ -96,6 +96,7 @@ defined, else `g`". It's an ordered sum of partial morphisms into
 | `shopee_api` | `Url → PriceResult` ⊸ | `scraper._shopee_api` |
 | `render` | `Url → Html` ⊸ (via browser) | `scraper._render_with_playwright` |
 | `parse_price_number`, `detect_currency`, `looks_like_bot_wall` | pure | `scraper.*` |
+| `extract_from_html` | `Html × Url → PriceResult?` (never renders) | `scraper.extract_from_html`, used by `history` for archived pages |
 | `adapter_for`, `retailer_label`, `shopee_ids` | pure | `adapters.*` |
 
 **Loc**: the caller's thread in `ServerProc`, `Shop` (external), and `Chromium`

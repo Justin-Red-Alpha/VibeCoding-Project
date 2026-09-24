@@ -182,6 +182,35 @@ product page shows both figures. If no rate is available, the target is shown bu
 does not affect the verdict. The target is stored as you typed it and is never
 rewritten.
 
+### Past prices from the Internet Archive
+
+A newly tracked product has no history, so the verdict would say `NOT ENOUGH DATA`
+for days. When you track a listing, the app searches the **Internet Archive**
+(web.archive.org) in the background for dated copies of that same listing's page.
+It reads the price from each copy with the normal extractor and adds those prices
+to the history. They count in the chart and the verdict at once. For example, the
+amazon.com WH-1000XM5 page gave 9 prices from May 2025 to Sep 2026.
+
+What to expect:
+- **Only the listing's own page is used,** meaning its URL plus the shop's standard
+  form of it (Amazon `/dp/<id>`), on the same site. An amazon.com page never
+  feeds an amazon.sg listing.
+- **"Cheapest right now" stays live.** Archived prices are history only. In
+  *Raw snapshots* they're marked **archived** and link to the copy they came from.
+- **Some copies are left out:** a price in another currency, and a price under a
+  third or over three times the listing's usual price, which is usually an
+  accessory or a used offer. Each listing's note says what was found and what was
+  excluded.
+- **It works for Amazon and for sites that embed standard product price data.
+  It doesn't work for Lazada or Shopee.** They draw the real price with scripts,
+  so their archived copies hold only the crossed-out list price, which the app
+  never reads.
+- **It takes a few minutes and asks the archive slowly:** at most 24 copies, 15
+  requests a minute. If the archive says "slow down" (HTTP 429) or refuses the
+  connection, every lookup pauses for 15–60 minutes, because the archive
+  blocks clients that keep going. "Look for archived prices" on the product page
+  runs it again, and never adds a copy twice.
+
 ## 6. Currency conversion
 
 Pick a currency from **Show prices in** (top right) and every price is restated in
@@ -233,10 +262,12 @@ python -m tests.test_extraction   # extraction, comparison, decisions
 python -m tests.test_search       # matching, URL filtering, throttle detection
 python -m tests.test_currency     # what may be ranked, charted or compared with a target
 python -m tests.test_shop_search  # concurrent shops, block detection, browser start-up
+python -m tests.test_history      # archived prices: matching, filtering, back-off, live-only current price
 ```
 
 `test_shop_search` is offline too. Its browser checks run local Chromium against
-in-memory pages, never a shop.
+in-memory pages, never a shop. `test_history` fakes the archive, so it never
+contacts web.archive.org.
 
 Covers every extraction strategy against fixtures, multi-currency parsing
 (`Rp1.234.567` vs `1,234.56`), bot-wall and throttle detection, product-vs-accessory

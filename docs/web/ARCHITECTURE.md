@@ -81,6 +81,10 @@ search").
    §7.2.
 7. **Chart colours** come from `--series-1..8`, in source-creation order, never
    cycled. A table dot matches its chart line.
+8. **The current price is live-only.** `_latest_per_source` skips archived rows
+   (`origin?` set), which count only in history and the verdict. Adding a product,
+   tracking from discovery or adding a source queues an archive lookup
+   (`history.schedule_backfill`) and never waits for it.
 
 ## 7. Atoms owned (FRAMEWORK §4)
 **Trn**: routes (`dashboard`, `product_detail`, `discover_page`, `discover_stream`,

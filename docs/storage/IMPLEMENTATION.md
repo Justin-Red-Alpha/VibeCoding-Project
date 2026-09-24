@@ -27,6 +27,9 @@
 | `add_source` | `row → id` | `app/database.py:add_source` | built |
 | `add_snapshot` | `row → ()` | `app/database.py:add_snapshot` | built |
 | latest snapshot | `Source → PriceSnapshot?` | `app/database.py:get_latest_snapshot` | built |
+| `origin?`, `origin_ref?` | `PriceSnapshot → {wayback}`, `→ Url` | `app/database.py:origin_ref` | built |
+| archived refs per listing | `Source → Url*` | `app/database.py:get_origin_refs` | built |
+| `history_checked_at?`, `history_note?` | `Source → Date / 𝕊` | `app/database.py:set_history_note` | built |
 | `display_currency?` | `Setting → Currency` | `app/database.py:get_setting` | built |
 | set setting | `key × value? → ()` | `app/database.py:set_setting` | built |
 | `rate` cache write | `FxRate* → ()` | `app/database.py:save_fx_rates` | built |
@@ -43,9 +46,13 @@
 | 4. rebuild with both pragmas | `app/database.py:_migrate_single_url_schema` | `tests/test_currency.py:test_upgrade_adds_target_currency` |
 | 5. migrate → schema → columns | `app/database.py:init_db` | `tests/test_currency.py:test_upgrade_adds_target_currency` |
 | target currency round-trips | `app/database.py:add_product` | `tests/test_currency.py:test_target_currency_round_trip` |
+| 6. archived rows: history, never current | `app/main.py:_latest_per_source` | `tests/test_history.py:test_current_price_is_live_only` |
+| provenance columns added to old DBs | `app/database.py:_add_missing_columns` | `tests/test_history.py:test_storage` |
 
 ## Notes / divergences
-- Rule 1 is enforced by the only writer, `refresh_source`, not by a table `CHECK`.
-  A future second writer must keep it.
+- Rule 1 is enforced by the writers, not by a table `CHECK`. Since 2026-09-24
+  there are two: `refresh_source` (live) and `history.backfill_source` (archived,
+  success rows only). Storage suggestions #1 (a `CHECK` constraint) is now more
+  relevant.
 - Nothing tests `set_product_currency` directly. Its write-once behaviour is only
   exercised through the view tests.

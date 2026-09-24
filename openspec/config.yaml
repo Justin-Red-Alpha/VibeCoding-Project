@@ -6,15 +6,15 @@ context: |
   from the supercharge skill. The model of this system lives in docs/: start at
   docs/architecture-map.md, then docs/<component>/ARCHITECTURE.md for the
   component(s) touched. Components: discovery, extraction, browser, storage,
-  analysis, fx, web, refresh.
+  analysis, fx, web, refresh, history.
   Every claim must name its object, morphism, location or transmission and map to a
   real file:symbol, a planned item, or an explicit open question. Never invent
   architecture that cannot be grounded.
-  The eight invariants in CLAUDE.md are non-negotiable (never store a converted
+  The invariants in CLAUDE.md are non-negotiable (never store a converted
   price; never show a list price; a block never looks like an empty result; never
   rank across currencies; target and history share a currency; the user confirms
   matches; the headline comes only from plausible listings; table rebuilds need
-  both pragmas).
+  both pragmas; archived prices are history, never the current price).
 
 rules:
   design:

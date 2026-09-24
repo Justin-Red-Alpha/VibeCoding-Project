@@ -3,5 +3,8 @@ __pycache__/
 *.pyc
 data/app.db
 
+# local secrets (API keys) — never commit
+.env
+
 # generated code graph (rebuild with: graphify . --code-only)
 graphify-out/

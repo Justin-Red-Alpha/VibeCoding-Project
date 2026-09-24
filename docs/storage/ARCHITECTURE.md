@@ -34,6 +34,8 @@ graph LR
     N -.->|"snap_currency?"| C
     N -.->|"error?"| T
     N -.->|"strategy?"| T
+    N -.->|"origin? · origin_ref? (archived)"| T
+    S -.->|"history_checked_at? · history_note?"| T
     P -.->|"target_price?"| R
     P -.->|"target_currency?"| C
     P -.->|"currency? (stored copy)"| C
@@ -64,6 +66,9 @@ graph LR
 | `snap_currency?` | `PriceSnapshot → Currency` | Partial | the **shop's own** currency, never a converted one |
 | `error?` | `PriceSnapshot → 𝕊` | Partial | present iff the fetch failed. Why the UI shows no price |
 | `strategy?` | `PriceSnapshot → 𝕊` | Partial | which extraction strategy won |
+| `origin?` | `PriceSnapshot → {wayback}` | Partial | NULL = a live check. Set = read from an archived copy of the same listing (the §3 discriminator; see `history`) |
+| `origin_ref?` | `PriceSnapshot → Url` | Partial | the archived copy it came from. Provenance and dedup key |
+| `history_checked_at?`, `history_note?` | `Source → Date`, `Source → 𝕊` | Partial | when the archive was last asked, and what it said |
 | `target_price?` | `Product → ℝ` | Partial | the user's buy-at-or-below amount, as typed |
 | `target_currency?` | `Product → Currency` | Partial | currency the target was typed in. NULL = "Shop's currency" = `currency?` |
 | `currency?` | `Product → Currency` | Partial (stored copy) | the product's **primary currency**. Deduced as `snap_currency ∘ first successful snapshot`, stored write-once |
@@ -94,6 +99,11 @@ source. It's identity on history, so no price is lost. Additive columns
    rows.
 5. Order at startup: migrate v1 → apply `SCHEMA` → add missing columns. Indexes in
    `SCHEMA` reference v2 columns, and `ADD COLUMN` needs the table to exist.
+6. **Archived rows are history, never the current price.** `origin? ≠ ∅` rows
+   count in the series and the verdict, but the "latest per source" view ignores
+   them. `fetched_at` means *observed at*: the capture time for archived rows.
+   Note: `PriceSnapshot` now has **two writers**, `refresh` (live, success ⊕
+   failure) and `history` (archived, success only). Rule 1 holds for both.
 
 ## 7. Atoms owned (FRAMEWORK §4)
 **Trn**

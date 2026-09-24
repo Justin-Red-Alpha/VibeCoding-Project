@@ -82,6 +82,12 @@
         <form method="post" action="/products/{{ product.id }}/refresh">
             <button type="submit" class="btn btn-secondary">Refresh All Sources</button>
         </form>
+        <form method="post" action="/products/{{ product.id }}/history">
+            <button type="submit" class="btn btn-secondary"
+                    title="Search the Internet Archive for this listing's past prices (runs in the background)">
+                Look for archived prices
+            </button>
+        </form>
         <form method="post" action="/products/{{ product.id }}/delete" onsubmit="return confirm('Stop tracking this product?');">
             <button type="submit" class="btn btn-danger">Delete Product</button>
         </form>
@@ -102,6 +108,10 @@
                     {{ s.retailer }}
                     {% if s.is_cheapest %}<span class="tag tag-cheapest">cheapest</span>{% endif %}
                     <a class="source-url" href="{{ s.url }}" target="_blank" rel="noopener">{{ s.url|truncate(60) }}</a>
+                    {% set h = history_by_source.get(s.source_id) %}
+                    <span class="history-note">
+                        {% if h and h.note %}{{ h.note }}{% else %}Archived prices: not looked up yet.{% endif %}
+                    </span>
                 </td>
                 <td class="price-cell">
                     {% if s.price is not none %}
@@ -156,15 +166,24 @@
 
 <section class="card">
     <h3>Raw snapshots</h3>
+    <p class="hint">Rows marked <strong>archived</strong> were read from the Internet Archive's copy of the
+        same listing, dated when it was archived. They count in the history and the verdict, never as
+        the current price.</p>
     <table class="snapshot-table">
-        <thead><tr><th>Fetched at (UTC)</th><th>Retailer</th><th>Price</th><th>How</th><th>Error</th></tr></thead>
+        <thead><tr><th>Observed at (UTC)</th><th>Retailer</th><th>Price</th><th>How</th><th>Error</th></tr></thead>
         <tbody>
         {% for s in snapshots[:50] %}
             <tr>
                 <td>{{ s.fetched_at[:19]|replace("T", " ") }}</td>
                 <td>{{ s.retailer }}</td>
                 <td>{% if s.price is not none %}{{ s.currency or "" }} {{ "%.2f"|format(s.price) }}{% else %}—{% endif %}</td>
-                <td><span class="strategy-chip">{{ s.strategy or "" }}</span></td>
+                <td>
+                    {% if s.origin %}
+                        <a class="archived-chip" href="{{ s.origin_ref }}" target="_blank" rel="noopener"
+                           title="Open the archived copy this price was read from">archived</a>
+                    {% endif %}
+                    <span class="strategy-chip">{{ s.strategy or "" }}</span>
+                </td>
                 <td class="error-text">{{ s.error or "" }}</td>
             </tr>
         {% endfor %}

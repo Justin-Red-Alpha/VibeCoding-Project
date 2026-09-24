@@ -17,6 +17,7 @@
 | `pin_currency?` | `PriceSnapshot → Product` | `app/database.py:set_product_currency` | built |
 | schedule start | `() → ()` | `app/scheduler.py:start_scheduler` | built |
 | schedule stop | `() → ()` | `app/scheduler.py:stop_scheduler` | built |
+| one-off job (used by history) | `id × fn × args → ()` | `app/scheduler.py:run_once` | built |
 
 ## Composition rules → where enforced
 | Rule (ARCHITECTURE §6) | Enforced at | Tested at |

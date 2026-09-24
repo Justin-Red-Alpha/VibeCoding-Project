@@ -35,6 +35,11 @@ class Adapter:
     search_title: str | None = None       # title within a card
     search_price: str | None = None       # price within a card
     search_link: str = "a[href]"          # product link within a card
+    # The shop's own id for an item (first regex group) and the canonical path
+    # built from it. Lets the price archive find copies of the SAME listing filed
+    # under another URL shape (Amazon: a product slug vs /dp/<ASIN>).
+    item_id_re: str | None = None
+    canonical_path: str | None = None     # e.g. "/dp/{id}"
 
     @property
     def supports_site_search(self) -> bool:
@@ -85,6 +90,8 @@ AMAZON = Adapter(
     },
     notes="Price is in the server-rendered HTML, but Amazon serves bot checks if you poll often.",
     product_url_re=r"/(?:dp|gp/product)/[A-Z0-9]{10}",
+    item_id_re=r"/(?:dp|gp/product)/([A-Z0-9]{10})",
+    canonical_path="/dp/{id}",
     search_domain="amazon.sg",
     search_path="/s?k={q}",
     search_card='[data-component-type="s-search-result"]',

@@ -335,6 +335,27 @@ input {
     font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
 }
 
+/* Where a listing's past prices came from; stays visible on phones. */
+.history-note {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.78rem;
+    font-weight: 400;
+    color: var(--text-secondary);
+}
+.archived-chip {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    background: var(--muted-fill);
+    color: var(--muted-text);
+    text-decoration: none;
+}
+.archived-chip:hover { text-decoration: underline; }
+
 .btn-link {
     background: none;
     border: none;

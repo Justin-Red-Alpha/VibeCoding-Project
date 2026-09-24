@@ -6,6 +6,9 @@
 
 1. **Declare the SSE event types once**, so Law 2 goes from advisory to PASS:
    [web #1](web/suggestions.md)
+1a. **Check the suspicious archived USD 88, then order Amazon's `#corePrice…`
+   selectors first.** A generic first selector can read a carousel or used-offer
+   price into history: [history #1](history/suggestions.md)
 2. **Test refresh**, the sole writer of price history, which has no tests:
    [refresh #1](refresh/suggestions.md)
 3. **Guard the browser seam** with a test that fails on any

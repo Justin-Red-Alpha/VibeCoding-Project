@@ -28,7 +28,10 @@ CREATE TABLE IF NOT EXISTS sources (
     retailer TEXT NOT NULL,
     url TEXT NOT NULL,
     price_selector TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- When the price archive was last consulted for this listing, and what it said.
+    history_checked_at TEXT,
+    history_note TEXT
 );
 
 CREATE TABLE IF NOT EXISTS price_snapshots (
@@ -37,8 +40,15 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
     price REAL,
     currency TEXT,
     strategy TEXT,
+    -- When the price was observed: the fetch time, or the capture time for an
+    -- archived copy.
     fetched_at TEXT NOT NULL,
-    error TEXT
+    error TEXT,
+    -- NULL = a live check. 'wayback' = read from an archived copy of this same
+    -- listing, whose URL is origin_ref. Archived rows are history only, never
+    -- the current price.
+    origin TEXT,
+    origin_ref TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sources_product ON sources(product_id);
@@ -135,8 +145,16 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
     """Columns added after a table already existed. CREATE TABLE IF NOT EXISTS
     won't add them to an old database. ADD COLUMN doesn't rebuild the table, so
     the foreign-key cascade trap above doesn't apply here."""
-    if "target_currency" not in _columns(conn, "products"):
-        conn.execute("ALTER TABLE products ADD COLUMN target_currency TEXT")
+    additions = {
+        "products": ["target_currency"],
+        "sources": ["history_checked_at", "history_note"],
+        "price_snapshots": ["origin", "origin_ref"],
+    }
+    for table, columns in additions.items():
+        existing = _columns(conn, table)
+        for column in columns:
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
 
 
 def init_db() -> None:
@@ -258,12 +276,39 @@ def add_snapshot(
     currency: str | None = None,
     strategy: str | None = None,
     error: str | None = None,
+    fetched_at: str | None = None,
+    origin: str | None = None,
+    origin_ref: str | None = None,
 ) -> None:
+    """Record one observation. Live checks leave `fetched_at` to now and `origin`
+    empty; archived ones pass the capture time and where it came from."""
     conn = get_connection()
     conn.execute(
-        "INSERT INTO price_snapshots (source_id, price, currency, strategy, fetched_at, error) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (source_id, price, currency, strategy, now_iso(), error),
+        "INSERT INTO price_snapshots "
+        "(source_id, price, currency, strategy, fetched_at, error, origin, origin_ref) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (source_id, price, currency, strategy, fetched_at or now_iso(), error, origin, origin_ref),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_origin_refs(source_id: int) -> set[str]:
+    """Archived copies already recorded for this listing, so a re-run adds none twice."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT origin_ref FROM price_snapshots WHERE source_id = ? AND origin_ref IS NOT NULL",
+        (source_id,),
+    ).fetchall()
+    conn.close()
+    return {row["origin_ref"] for row in rows}
+
+
+def set_history_note(source_id: int, note: str) -> None:
+    conn = get_connection()
+    conn.execute(
+        "UPDATE sources SET history_checked_at = ?, history_note = ? WHERE id = ?",
+        (now_iso(), note, source_id),
     )
     conn.commit()
     conn.close()

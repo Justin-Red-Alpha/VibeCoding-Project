@@ -24,7 +24,7 @@ placed on four threads, with code that assumed only one.
 | --- | --- | --- |
 | `Product` | name, target_price?, target_currency?, currency? | SQLite |
 | `Source` | one shop's listing of a product: url, retailer, price_selector? | SQLite |
-| `PriceSnapshot` | success ⊕ failure: price?/currency?/strategy? or error | SQLite. In RAM as `PriceResult` ⊕ `ScrapeError` |
+| `PriceSnapshot` | success ⊕ failure: price?/currency?/strategy? or error; `origin?` marks an archived observation | SQLite. In RAM as `PriceResult` ⊕ `ScrapeError` (live) or `Observation` (archived) |
 | `Adapter` | per-shop knowledge, with site search as partial morphisms | code (`ADAPTERS`) |
 | `Candidate` | a search hit with its score, flags and price? | RAM (transient) |
 | `FxRate`, `Setting` | USD-based rate cache; display currency | SQLite |
@@ -42,6 +42,7 @@ placed on four threads, with code that assumed only one.
 | `target_in` | `Target × Currency → ℝ?` | analysis |
 | `convert` | `ℝ × Currency × Currency → ℝ?` | fx |
 | `refresh_source` | `Source → PriceSnapshot` ⊸ | refresh |
+| `backfill_source` | `Source → PriceSnapshot*` ⊸ (archived, background) | history |
 | `run` / `chromium` / `new_page` | start and drive Chromium | browser |
 | `discover_stream`, `_product_view` | request → events / view | web |
 
@@ -52,7 +53,7 @@ placed on four threads, with code that assumed only one.
 - `Chromium`: a headless child process, one per search or render.
 - `SQLite`: `data/app.db`.
 - `UserBrowser`: the page.
-- External: `Shop`s, `FxApi`, `DDG`.
+- External: `Shop`s, `FxApi`, `DDG`, `Archive` (web.archive.org).
 
 **Trm**
 | Trm | carries | c_from → c_to |
@@ -67,6 +68,7 @@ placed on four threads, with code that assumed only one.
 | `t_sql` | rows | ServerProc ⇄ SQLite |
 | `t_fx` | `{currency: rate}` | FxApi → ServerProc |
 | `t_ddg` | search-result HTML | DDG → ServerProc (fallback only) |
+| `t_archive` | capture index rows, raw archived HTML | Archive → ServerProc (scheduler thread; ≤ 15/min, stops on 429) |
 
 ## 3. Components
 | Component | Owned `Trn` | Built/active when | Doc |
@@ -79,6 +81,7 @@ placed on four threads, with code that assumed only one.
 | `fx` | convert, make_converter, refresh_rates | when converting | [fx/ARCHITECTURE.md](fx/ARCHITECTURE.md) |
 | `web` | routes, SSE stream, views, page JS | always | [web/ARCHITECTURE.md](web/ARCHITECTURE.md) |
 | `refresh` | refresh_source/product/all, scheduler | on demand + every 6 h | [refresh/ARCHITECTURE.md](refresh/ARCHITECTURE.md) |
+| `history` | archive_urls, wayback_lookup, filter_observations, backfill_source | after tracking a listing; on the button | [history/ARCHITECTURE.md](history/ARCHITECTURE.md) |
 
 The pipeline, read left to right, is `discovery → extraction → storage →
 analysis → web`, with `fx` plugged into `analysis` as an adapter for its
@@ -91,7 +94,8 @@ conversion port, and `browser` beneath discovery and extraction.
 | `fetch_price` | lookup pool · request workers · scheduler thread | the same `Trn` at three sites. Each site gets its own loop via `run` |
 | target-currency validation | `UserBrowser` (`<select>`) · `ServerProc` (`_target_currency`) | one validation placed twice (§7.2). The server copy is the authority |
 | `score_candidate` | shop-search thread · request worker (web fallback) | pure, so it's safe anywhere |
-| `PriceSnapshot` | RAM (`PriceResult`/`ScrapeError`) · SQLite row | one `Dat`, two `DataLoc`s. `refresh_source` is the bridge |
+| `PriceSnapshot` | RAM (`PriceResult`/`ScrapeError`, or `Observation`) · SQLite row | one `Dat`, with archived and live rows in the same object (§3). Two writers: `refresh_source` and `backfill_source` |
+| `extract_from_html` | request/lookup threads (live) · scheduler thread (archived) | the same extraction for both, and neither renders |
 | storage `Trn`s | every thread | a connection per call keeps this safe |
 
 ## 5. Coherence checklist (§4.5 / §8) against the implementation
@@ -113,7 +117,9 @@ conversion port, and `browser` beneath discovery and extraction.
   setup. (This failed until 2026-09-24.)
 
 ## 6. Modeling smells swept (§3)
-- **No parallel objects.** `Adapter` folds site search into partial morphisms.
+- **No parallel objects.** Archived prices are `PriceSnapshot`s with `origin?`,
+  not a history table (the §3 reduction in `history/ARCHITECTURE.md`). `Adapter`
+  folds site search into partial morphisms.
   `PriceResult` is a `DataLoc` of `PriceSnapshot`, not a twin. `Candidate` vs
   `Source` was checked with the §3 reduction and kept apart, because they have
   different lifetimes and `Loc`s ([discovery/suggestions.md](discovery/suggestions.md) #3).

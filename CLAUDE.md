@@ -9,7 +9,7 @@ docs tree, written in FRAMEWORK.md's Dat/Trn/Loc/Trm terms.
 
 - `docs/architecture-map.md`: the whole-system map and the coherence checklist.
 - `docs/<component>/ARCHITECTURE.md`: each component's intent. The components are
-  discovery, extraction, browser, storage, analysis, fx, web and refresh.
+  discovery, extraction, browser, storage, analysis, fx, web, refresh and history.
 - `docs/<component>/IMPLEMENTATION.md`: maps every object and morphism to a
   `file:symbol`.
 - `docs/STATUS.md`: what's built and what isn't.
@@ -46,8 +46,10 @@ Each stage is independently testable, and `tests/` mostly tests stages, not rout
 
 ```
 products    (id, name, target_price, target_currency, currency)
-  └── sources        (id, product_id, retailer, url, price_selector)   -- same item, many shops
-        └── price_snapshots (id, source_id, price, currency, strategy, fetched_at, error)
+  └── sources        (id, product_id, retailer, url, price_selector,
+  │                   history_checked_at, history_note)                -- same item, many shops
+        └── price_snapshots (id, source_id, price, currency, strategy, fetched_at, error,
+                             origin, origin_ref)    -- origin NULL = live; 'wayback' = archived
 settings    (key, value)          -- display_currency lives here
 fx_rates    (base, quote, rate, fetched_at)
 ```
@@ -112,7 +114,27 @@ These each cost real debugging. Please don't undo them.
 
 8. **SQLite table rebuilds need both pragmas off.** See "Migration trap" below.
 
+9. **Archived prices are history, never the current price.** Rows with
+   `price_snapshots.origin` set were read from an Internet Archive copy of the
+   *same* listing (`app/history.py`). They feed `best_price_series` and the
+   verdict, but `main._latest_per_source` skips them, so they can never become
+   "cheapest right now". Archived pages are **never rendered**, and JS-priced
+   shops are skipped, because the only number in Lazada's archived HTML is the
+   list price (invariant 2).
+
 ## Traps already hit (don't rediscover these)
+
+**The Internet Archive firewall-blocks clients that ignore HTTP 429,** for an hour,
+doubling on repeat. It happened to this machine on 2026-09-24: research probes
+plus one live lookup, and the first version of `history` carried on past a 429 on
+a capture. `history` now keeps a 4 s gap, stops at the first 429 or refused
+connection, and pauses all lookups for 15 or 60 minutes. Don't hand-probe
+web.archive.org in loops; `tests/test_history.py` fakes it.
+
+**`--reload` can orphan its worker on Windows.** When the reloader is killed, the
+`multiprocessing` worker it spawned keeps the port and serves **stale code**. Port
+8000 then shows as owned by a dead PID. Find the child with
+`Get-CimInstance Win32_Process | ? ParentProcessId -eq <dead pid>` and stop it.
 
 **Migration / FK cascade.** `ALTER TABLE x RENAME TO x_v1` makes SQLite rewrite
 *other tables'* foreign keys to follow the rename. With `ON DELETE CASCADE`, the
@@ -227,6 +249,7 @@ python -m tests.test_extraction                    # extraction, comparison, dec
 python -m tests.test_search                        # matching, URL filters, throttle detection
 python -m tests.test_currency                      # ranking/chart/target currency rules, DB upgrade
 python -m tests.test_shop_search                   # concurrency, block detection, --reload loop, page spinners
+python -m tests.test_history                       # archived prices: matching, filters, back-off, live-only current
 ```
 
 `test_currency` points `database.DB_PATH` at a temp file and drives routes with

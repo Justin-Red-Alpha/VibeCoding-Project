@@ -13,6 +13,7 @@ from starlette.status import HTTP_303_SEE_OTHER
 
 from . import database as db
 from . import fx
+from . import history
 from .adapters import ADAPTERS, adapter_for
 from .browser import BrowserUnavailable
 from .analysis import analyze, best_price_series, compare_sources, dominant_currency, target_in
@@ -69,9 +70,15 @@ def _latest_per_source(snapshots) -> dict:
 
     Showing the last good price (rather than nothing) keeps a temporarily
     blocked retailer useful, while still surfacing that the last try failed.
+
+    Live checks only. An archived copy can be newer than the last live check, and
+    it would then pose as the current price, so archived rows are skipped here.
+    They still count in the history (best_price_series).
     """
     latest: dict[int, dict] = {}
     for snap in snapshots:  # ordered oldest -> newest
+        if "origin" in snap.keys() and snap["origin"]:
+            continue
         entry = latest.setdefault(
             snap["source_id"],
             {"price": None, "currency": None, "fetched_at": None, "error": None},
@@ -391,6 +398,7 @@ def track_from_discovery(
     for url in chosen:
         db.add_source(product_id, url=url, price_selector=None)
     refresh_product(product_id)
+    history.schedule_backfill(product_id)  # past prices, in the background
     return RedirectResponse(url=f"/product/{product_id}", status_code=HTTP_303_SEE_OTHER)
 
 
@@ -407,6 +415,7 @@ def create_product(
     product_id = db.add_product(name=name, target_price=target, target_currency=currency)
     db.add_source(product_id, url=url, price_selector=price_selector.strip() or None)
     refresh_product(product_id)  # fetch an initial price right away
+    history.schedule_backfill(product_id)  # past prices, in the background
     return RedirectResponse(url=f"/product/{product_id}", status_code=HTTP_303_SEE_OTHER)
 
 
@@ -416,6 +425,16 @@ def create_source(product_id: int, url: str = Form(...), price_selector: str = F
         raise HTTPException(status_code=404, detail="Product not found")
     source_id = db.add_source(product_id, url=url, price_selector=price_selector.strip() or None)
     refresh_source(source_id)
+    history.schedule_backfill(product_id)  # only the new listing: others are already checked
+    return RedirectResponse(url=f"/product/{product_id}", status_code=HTTP_303_SEE_OTHER)
+
+
+@app.post("/products/{product_id}/history")
+def lookup_history(product_id: int):
+    """Re-check the price archive for every listing of this product."""
+    if db.get_product(product_id) is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    history.schedule_backfill(product_id, only_unchecked=False)
     return RedirectResponse(url=f"/product/{product_id}", status_code=HTTP_303_SEE_OTHER)
 
 
@@ -508,6 +527,10 @@ def product_detail(request: Request, product_id: int):
             "request": request,
             **view,
             "sources": sources,
+            "history_by_source": {
+                s["id"]: {"note": s["history_note"], "checked_at": s["history_checked_at"]}
+                for s in sources
+            },
             "color_index": color_index,
             "per_source_series": per_source_series,
             "snapshots": list(reversed(db.get_snapshots_for_product(product_id))),

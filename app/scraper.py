@@ -404,6 +404,14 @@ def fetch_price(url: str, selector: str | None = None, timeout: int = 20) -> Pri
     )
 
 
+def extract_from_html(html: str, url: str) -> PriceResult | None:
+    """Read a price from HTML we already have, without fetching or rendering
+    anything. Used for archived copies: replaying their scripts would reach live
+    hosts, and for JS-priced shops (Lazada) the only number left in the raw HTML
+    is the crossed-out list price, which is deliberately never read."""
+    return _extract(html, url, None, adapter_for(url))
+
+
 def _extract(html: str, url: str, selector: str | None, adapter, rendered: bool = False):
     soup = BeautifulSoup(html, "html.parser")
     suffix = "+browser" if rendered else ""

@@ -12,6 +12,7 @@ convention in its one writer, not by the schema.
 | --- | --- | --- |
 | `Product`, `Source`, `PriceSnapshot`, `Setting`, `FxRate` | ✅ built | |
 | `target_currency?` | ✅ built | added 2026-09-24, additive column |
+| `origin?`, `origin_ref?`, `history_checked_at?`, `history_note?` | ✅ built | added 2026-09-24 for archived history (additive) |
 | `currency?` write-once | ✅ built | no direct test |
 | v1 → v2 migration | ✅ built | tested via the upgrade test |
 | historical FX rate per snapshot | ⬜ unbuilt | converted history uses today's rate (documented limit) |

@@ -15,12 +15,13 @@
 | fx | `app/fx.py` | [fx/ARCHITECTURE.md](fx/ARCHITECTURE.md) | [fx/IMPLEMENTATION.md](fx/IMPLEMENTATION.md) |
 | web | `app/main.py`, `app/templates/`, `app/static/` | [web/ARCHITECTURE.md](web/ARCHITECTURE.md) | [web/IMPLEMENTATION.md](web/IMPLEMENTATION.md) |
 | refresh | `app/refresh.py`, `app/scheduler.py` | [refresh/ARCHITECTURE.md](refresh/ARCHITECTURE.md) | [refresh/IMPLEMENTATION.md](refresh/IMPLEMENTATION.md) |
+| history | `app/history.py` | [history/ARCHITECTURE.md](history/ARCHITECTURE.md) | [history/IMPLEMENTATION.md](history/IMPLEMENTATION.md) |
 
 ## Shared objects (one Dat, DataLocs in ≥2 components)
 | Object | Authoritative at | Also read by | Realised at |
 | --- | --- | --- | --- |
 | `Adapter` | extraction | discovery (search selectors), web (`discover_page` marks searchable shops) | `app/adapters.py:Adapter` |
-| `PriceSnapshot` | storage (row) | extraction (RAM form `PriceResult`), refresh (writer), analysis (reader) | `app/database.py:add_snapshot` |
+| `PriceSnapshot` | storage (row) | extraction (RAM form `PriceResult`), refresh (live writer), history (archived writer), analysis (reader), web (live-only latest) | `app/database.py:add_snapshot` |
 | `Candidate` | discovery | web (rows, summary, price lookups) | `app/search/base.py:Candidate` |
 | supported currencies | fx | web (target validation, both pickers) | `app/fx.py:DISPLAY_CURRENCIES` |
 | shop request headers | extraction | browser (user agent) | `app/scraper.py:BROWSER_HEADERS` |
@@ -36,6 +37,9 @@
 | `convert` port | `ℝ × Currency × Currency → ℝ?` | fx → analysis, web | `app/fx.py:convert` |
 | `record` | `PriceSnapshot` | refresh → storage | `app/refresh.py:refresh_source` |
 | `t_sse` | `SseEvent*` | web → user's browser | `app/main.py:_sse` |
+| `lookup` port | `Source × Adapter → HistoryResult` | history source → history | `app/history.py:HISTORY_SOURCES` |
+| `t_archive` | capture index / archived HTML | Internet Archive → history | `app/history.py:wayback_lookup` |
+| `trigger` | product id | web → history (scheduled) | `app/history.py:schedule_backfill` |
 
 ## System entry points
 | Entry | Trn triggered | Code |
@@ -47,6 +51,8 @@
 | HTTP `POST /discover/track` | `add_product`, `add_source`, `refresh_product` | `app/main.py:track_from_discovery` |
 | HTTP `POST /products` | `add_product`, `add_source`, `refresh_product` | `app/main.py:create_product` |
 | HTTP `POST /settings/currency` | `set_setting`, `refresh_rates` | `app/main.py:set_display_currency` |
+| HTTP `POST /products/{id}/history` | `schedule_backfill` (all listings) | `app/main.py:lookup_history` |
+| one-off job `history-<id>` | `backfill_product` | `app/scheduler.py:run_once` |
 | scheduler (every 6 h) | `refresh_all` | `app/scheduler.py:start_scheduler` |
 | startup | `init_db`, `refresh_rates`, scheduler | `app/main.py:lifespan` |
 
