@@ -23,10 +23,13 @@
         <input type="text" name="name" placeholder="Name (e.g. Sony WH-1000XM5)" required>
         <input type="url" name="url" placeholder="Product page URL" required>
         <input type="text" name="price_selector" placeholder="CSS selector (optional)">
-        <input type="number" step="0.01" name="target_price" placeholder="Target price (optional)">
+        {% include "_target_price_field.html" %}
         <button type="submit" class="btn btn-primary">Add & Check Price</button>
     </form>
-    <p class="hint">A target uses the currency of the first listing that returns a currency.</p>
+    <p class="hint">
+        Pick the currency your target is in. "Shop's currency" means whatever the listing
+        turns out to be priced in.
+    </p>
     <p class="retailer-hint">
         Recognised shops: {{ known_retailers|join(", ") }} — plus any site that publishes
         schema.org price data or lets you point at the price with a selector.

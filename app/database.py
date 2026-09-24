@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     target_price REAL,
+    -- NULL means "in the product's own currency" (the pre-choice behaviour).
+    target_currency TEXT,
     currency TEXT,
     created_at TEXT NOT NULL
 );
@@ -129,12 +131,21 @@ def _retailer_name(url: str) -> str:
     return retailer_label(url)
 
 
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    """Columns added after a table already existed. CREATE TABLE IF NOT EXISTS
+    won't add them to an old database. ADD COLUMN doesn't rebuild the table, so
+    the foreign-key cascade trap above doesn't apply here."""
+    if "target_currency" not in _columns(conn, "products"):
+        conn.execute("ALTER TABLE products ADD COLUMN target_currency TEXT")
+
+
 def init_db() -> None:
     conn = get_connection()
     # Migrate first: the new indexes reference columns a v1 database doesn't
     # have yet, so applying SCHEMA to it would fail.
     _migrate_single_url_schema(conn)
     conn.executescript(SCHEMA)
+    _add_missing_columns(conn)
     conn.commit()
     conn.close()
 
@@ -145,11 +156,17 @@ def now_iso() -> str:
 
 # --- products ---------------------------------------------------------
 
-def add_product(name: str, target_price: float | None, currency: str | None = None) -> int:
+def add_product(
+    name: str,
+    target_price: float | None,
+    currency: str | None = None,
+    target_currency: str | None = None,
+) -> int:
     conn = get_connection()
     cur = conn.execute(
-        "INSERT INTO products (name, target_price, currency, created_at) VALUES (?, ?, ?, ?)",
-        (name, target_price, currency, now_iso()),
+        "INSERT INTO products (name, target_price, target_currency, currency, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (name, target_price, target_currency, currency, now_iso()),
     )
     conn.commit()
     product_id = cur.lastrowid

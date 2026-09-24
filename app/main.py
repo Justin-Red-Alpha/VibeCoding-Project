@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,7 +14,8 @@ from starlette.status import HTTP_303_SEE_OTHER
 from . import database as db
 from . import fx
 from .adapters import ADAPTERS, adapter_for
-from .analysis import analyze, best_price_series, compare_sources, dominant_currency
+from .browser import BrowserUnavailable
+from .analysis import analyze, best_price_series, compare_sources, dominant_currency, target_in
 from .refresh import refresh_all, refresh_product, refresh_source
 from .scheduler import start_scheduler, stop_scheduler
 from .scraper import ScrapeError, fetch_price
@@ -27,6 +29,9 @@ from .search.providers import SearchUnavailable, search_domains
 DISCOVER_PRICE_LIMIT = int(os.environ.get("DISCOVER_PRICE_LIMIT", "6"))
 # Listings kept per shop. Search pages return dozens; only the best few are useful.
 DISCOVER_PER_SHOP = int(os.environ.get("DISCOVER_PER_SHOP", "6"))
+# Product pages fetched at once for listings whose search card had no price.
+# Small on purpose: roughly a person opening three tabs on the same shop.
+PRICE_LOOKUP_CONCURRENCY = 3
 # Minimum match score allowed to set the headline "best price". Matches the
 # "medium confidence" boundary in the UI, so the banner never claims a saving
 # based on a listing the page itself marks as a doubtful match.
@@ -100,25 +105,16 @@ def _product_view(product) -> dict:
         to_display=to_display, display_currency=shown_in,
     )
     series = best_price_series(snapshots, currency, to_display=to_display)
+    history_currency = shown_in or currency
 
-    # Targets use the product's original comparison currency. The history may
-    # be converted to the user's display currency, so convert the target too;
-    # otherwise changing the display setting changes the BUY/WAIT decision.
-    target_currency = currency
+    # The target keeps the currency it was entered in; products from before that
+    # choice existed have none, meaning "the product's own currency". Restate it
+    # in the history's currency before comparing, or a ringgit target would be
+    # read as dollars. If it can't be restated, show it but leave it out.
     target_price = product["target_price"]
-    target_for_analysis = None
-    target_display_price = None
-    target_not_applied = False
-    if target_price is not None:
-        if target_currency:
-            target_for_analysis = (
-                fx.convert(target_price, target_currency, shown_in)
-                if shown_in else target_price
-            )
-            if shown_in:
-                target_display_price = target_for_analysis
-        if target_for_analysis is None:
-            target_not_applied = True
+    target_currency = product["target_currency"] or currency
+    target_for_analysis = target_in(target_price, target_currency, history_currency, fx.convert)
+    target_not_applied = target_price is not None and target_for_analysis is None
 
     verdict = analyze(series, target_for_analysis)
 
@@ -129,10 +125,13 @@ def _product_view(product) -> dict:
         "currency": comparison.comparison_currency or currency,
         "original_currency": currency,
         "target_currency": target_currency,
-        "target_display_price": target_display_price,
+        # Only worth showing when it differs from the figure the user typed.
+        "target_display_price": (
+            target_for_analysis if target_currency != history_currency else None
+        ),
         "target_not_applied": target_not_applied,
         "display_currency": shown_in,
-        "history_currency": shown_in or currency,
+        "history_currency": history_currency,
         "series": series,
         "num_sources": len(sources),
     }
@@ -225,16 +224,24 @@ def discover_stream(q: str = ""):
         use_site_search = site_search.playwright_available() and site_search.shops_for(domains)
 
         if use_site_search:
-            for domain, retailer, candidates, error in site_search.search_all(
-                query, domains, per_shop=DISCOVER_PER_SHOP
-            ):
-                rows = []
-                for candidate in candidates:
-                    candidate.index = len(found)
-                    found.append(candidate)
-                    rows.append(_candidate_row(candidate, shown_in))
-                yield _sse({"type": "shop", "domain": domain, "retailer": retailer,
-                            "rows": rows, "error": error})
+            try:
+                for domain, retailer, candidates, error in site_search.search_all(
+                    query, domains, per_shop=DISCOVER_PER_SHOP
+                ):
+                    rows = []
+                    for candidate in candidates:
+                        candidate.index = len(found)
+                        found.append(candidate)
+                        rows.append(_candidate_row(candidate, shown_in))
+                    yield _sse({"type": "shop", "domain": domain, "retailer": retailer,
+                                "rows": rows, "error": error})
+            except BrowserUnavailable as exc:
+                # Say so, rather than dropping the stream and leaving every shop
+                # on "searching..." -- which reads as slow, not broken.
+                yield _sse({"type": "error", "message": (
+                    f"The browser used to search shops couldn't start, so the search "
+                    f"stopped. {exc}")})
+                return
         else:
             # No browser: fall back to web search, then price each listing.
             yield _sse({"type": "note", "message": (
@@ -254,27 +261,36 @@ def discover_stream(q: str = ""):
         # Shops don't always print a price on the search page (Amazon often
         # doesn't). Spend the remaining budget fetching those product pages, best
         # matches first, so the comparison isn't full of holes.
+        # A few at a time, each shown as it lands: one at a time was ~2 s per
+        # listing in a row. Candidates are only touched here, never in a worker.
         missing = [c for c in sorted(found, key=lambda c: c.score, reverse=True)
                    if c.price is None][:DISCOVER_PRICE_LIMIT]
-        for candidate in missing:
-            payload = {"type": "price", "index": candidate.index}
-            try:
-                result = fetch_price(candidate.url, timeout=30)
-                candidate.price = result.price
-                candidate.currency = result.currency
-                payload.update(
-                    price=result.price,
-                    currency=result.currency,
-                    display_price=fx.convert(result.price, result.currency, shown_in),
-                    display_currency=shown_in,
-                )
-            except ScrapeError as exc:
-                candidate.price_error = str(exc)
-                payload["error"] = str(exc)
-            except Exception as exc:  # one bad listing must not kill the stream
-                candidate.price_error = f"Unexpected error: {exc}"
-                payload["error"] = str(exc)
-            yield _sse(payload)
+        pool = ThreadPoolExecutor(max_workers=PRICE_LOOKUP_CONCURRENCY)
+        try:
+            lookups = {pool.submit(fetch_price, c.url, timeout=30): c for c in missing}
+            for lookup in as_completed(lookups):
+                candidate = lookups[lookup]
+                payload = {"type": "price", "index": candidate.index}
+                try:
+                    result = lookup.result()
+                    candidate.price = result.price
+                    candidate.currency = result.currency
+                    payload.update(
+                        price=result.price,
+                        currency=result.currency,
+                        display_price=fx.convert(result.price, result.currency, shown_in),
+                        display_currency=shown_in,
+                    )
+                except ScrapeError as exc:
+                    candidate.price_error = str(exc)
+                    payload["error"] = str(exc)
+                except Exception as exc:  # one bad listing must not kill the stream
+                    candidate.price_error = f"Unexpected error: {exc}"
+                    payload["error"] = str(exc)
+                yield _sse(payload)
+        finally:
+            # If the user leaves mid-search, don't start lookups nobody will see.
+            pool.shutdown(wait=False, cancel_futures=True)
 
         yield _sse(_discovery_summary(found, shown_in))
 
@@ -345,11 +361,24 @@ def _discovery_summary(candidates, shown_in: str | None) -> dict:
     return summary
 
 
+def _target_currency(target: float | None, choice: str) -> str | None:
+    """The currency a target was typed in. '' means "the shop's own currency",
+    stored as None. Anything we can't convert is refused rather than stored,
+    since a target nobody can compare would just sit there looking applied."""
+    code = choice.strip().upper()
+    if code and code not in fx.DISPLAY_CURRENCIES:
+        raise HTTPException(status_code=400, detail=f"Unsupported target currency: {code}")
+    if target is None or not code:
+        return None
+    return code
+
+
 @app.post("/discover/track")
 def track_from_discovery(
     name: str = Form(...),
     urls: list[str] = Form(default=[]),
     target_price: str = Form(""),
+    target_currency: str = Form(""),
 ):
     """Turn the listings the user confirmed into a tracked product."""
     chosen = [u for u in urls if u.strip()]
@@ -357,7 +386,8 @@ def track_from_discovery(
         return RedirectResponse(url="/discover", status_code=HTTP_303_SEE_OTHER)
 
     target = float(target_price) if target_price.strip() else None
-    product_id = db.add_product(name=name, target_price=target)
+    currency = _target_currency(target, target_currency)
+    product_id = db.add_product(name=name, target_price=target, target_currency=currency)
     for url in chosen:
         db.add_source(product_id, url=url, price_selector=None)
     refresh_product(product_id)
@@ -370,9 +400,11 @@ def create_product(
     url: str = Form(...),
     price_selector: str = Form(""),
     target_price: str = Form(""),
+    target_currency: str = Form(""),
 ):
     target = float(target_price) if target_price.strip() else None
-    product_id = db.add_product(name=name, target_price=target)
+    currency = _target_currency(target, target_currency)
+    product_id = db.add_product(name=name, target_price=target, target_currency=currency)
     db.add_source(product_id, url=url, price_selector=price_selector.strip() or None)
     refresh_product(product_id)  # fetch an initial price right away
     return RedirectResponse(url=f"/product/{product_id}", status_code=HTTP_303_SEE_OTHER)
@@ -415,6 +447,26 @@ def refresh_everything():
     return RedirectResponse(url="/", status_code=HTTP_303_SEE_OTHER)
 
 
+def _chart_points(snapshots, shown_in: str | None, primary_currency: str | None, convert):
+    """One shop's chart line, in exactly one currency: the display currency if one
+    is selected, else the product's own. A point that can't be expressed in it is
+    left out -- plotting it at face value would put unlike currencies on one axis.
+    `convert` has fx.convert's contract."""
+    points = []
+    for snap in snapshots:
+        if snap["price"] is None:
+            continue
+        if shown_in:
+            price = convert(snap["price"], snap["currency"], shown_in)
+        elif snap["currency"] and snap["currency"] == primary_currency:
+            price = snap["price"]
+        else:
+            price = None
+        if price is not None:
+            points.append((snap["fetched_at"], price))
+    return points
+
+
 @app.get("/product/{product_id}")
 def product_detail(request: Request, product_id: int):
     product = db.get_product(product_id)
@@ -435,21 +487,10 @@ def product_detail(request: Request, product_id: int):
     seen_names: dict[str, int] = {}
     per_source_series = []
     for source in sources:
-        snapshots = [s for s in db.get_snapshots(source["id"]) if s["price"] is not None]
-        points = []
-        for snap in snapshots:
-            if view["display_currency"]:
-                price = fx.convert(
-                    snap["price"], snap["currency"], view["display_currency"]
-                )
-                if price is None:
-                    continue
-            else:
-                # Do not put unlike or unknown currencies on the same axis.
-                if not snap["currency"] or snap["currency"] != view["original_currency"]:
-                    continue
-                price = snap["price"]
-            points.append((snap["fetched_at"], price))
+        points = _chart_points(
+            db.get_snapshots(source["id"]),
+            view["display_currency"], view["original_currency"], fx.convert,
+        )
         if not points:
             continue
         seen_names[source["retailer"]] = seen_names.get(source["retailer"], 0) + 1

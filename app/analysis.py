@@ -171,6 +171,24 @@ def analyze(prices: list[float], target_price: float | None) -> Verdict:
     )
 
 
+def target_in(
+    amount: float | None,
+    currency: str | None,
+    into: str | None,
+    convert,
+) -> float | None:
+    """The user's target restated in the currency the price history is in.
+
+    `convert(amount, from_currency, to_currency)` has fx.convert's contract. None
+    means the target can't be compared honestly (no amount, an unknown currency
+    on either side, or no rate) and must be left out of the verdict, not guessed.
+    Nothing is stored: the target keeps the amount and currency it was entered in.
+    """
+    if amount is None or not currency or not into:
+        return None
+    return convert(amount, currency, into)
+
+
 def dominant_currency(snapshots) -> str | None:
     """The currency most of this product's successful fetches are priced in."""
     codes = [s["currency"] for s in snapshots if s["price"] is not None and s["currency"]]

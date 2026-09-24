@@ -127,6 +127,11 @@ h2, h3 { margin-top: 0; }
 .form-grid input { grid-column: span 1; }
 .form-grid button { grid-column: span 2; }
 
+/* A target amount and its currency share one grid cell, so they stay together. */
+/* min-width: 0 so its min-content width can't widen the whole grid column on phones. */
+.target-field { display: flex; gap: 6px; min-width: 0; }
+.target-field input { flex: 1; min-width: 0; }
+
 input {
     padding: 10px 12px;
     border: 1px solid var(--border);
@@ -349,6 +354,8 @@ input {
     gap: 10px;
     align-items: center;
 }
+/* The track form's middle cell holds a target amount *and* its currency. */
+.add-source-form.track-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
 
 .retailer-hint {
     color: var(--text-muted);
@@ -358,7 +365,7 @@ input {
 }
 
 @media (max-width: 640px) {
-    .add-source-form { grid-template-columns: 1fr; }
+    .add-source-form, .add-source-form.track-form { grid-template-columns: 1fr; }
     .compare-table .source-url { display: none; }
 }
 

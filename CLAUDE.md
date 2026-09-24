@@ -20,12 +20,16 @@ search/providers                                          decide)         SSE st
    (is this the same product?)
 ```
 
+`browser.py` is the only place Chromium is started or a page opened. Both
+`site_search` and `scraper._render_with_playwright` go through it. See the
+`--reload` trap below.
+
 Each stage is independently testable, and `tests/` mostly tests stages, not routes.
 
 ## Data model (SQLite, plain `sqlite3`, no ORM on purpose)
 
 ```
-products    (id, name, target_price, currency)
+products    (id, name, target_price, target_currency, currency)
   └── sources        (id, product_id, retailer, url, price_selector)   -- same item, many shops
         └── price_snapshots (id, source_id, price, currency, strategy, fetched_at, error)
 settings    (key, value)          -- display_currency lives here
@@ -64,10 +68,16 @@ These each cost real debugging. Please don't undo them.
    with no available rate is shown but never declared cheapest. Prices with no
    recognized currency are also shown but excluded from ranking and history.
 
-5. **A target price and its history must use the same currency.** The target uses
-   the product's primary currency (the first successful source with a known
-   currency). Convert the target when analysis uses a selected display currency;
-   if the target cannot be converted, show it but do not apply it to the verdict.
+5. **A target price and its history must use the same currency.** The target is
+   stored as typed, with the currency the user picked (`products.target_currency`).
+   NULL means "Shop's currency", which is the product's primary currency (the first
+   successful source with a known currency). Before the verdict, `analysis.target_in`
+   restates the target in the history's currency: the display currency if one is
+   selected, else the primary currency. If it can't be restated, show the target but
+   don't apply it. Don't reuse `products.currency` for the target's currency. That
+   column is the ranking pin, so storing an MYR target there would drop every SGD
+   listing from as-quoted ranking. Reading a ringgit target as dollars produced a
+   false `BUY NOW` (`tests/test_currency.py` pins it).
 
 6. **Matching ranks, the user decides.** Accessories are capped at 0.30 (low
    confidence) because a $30 case next to $345 headphones fabricates a 91%
@@ -110,6 +120,21 @@ with `curl -N --no-buffer`, not TestClient.
 **Windows console encoding.** Printing `₫`/`₱` etc. via the venv python crashes with
 a cp1252 `UnicodeEncodeError`. Prefix test runs with `PYTHONIOENCODING=utf-8`.
 
+**`--reload` + Playwright's sync API = every search dies (Windows).** With
+`--reload`, uvicorn 0.30 sets the process-wide policy to the Selector event loop,
+which cannot start subprocesses. The sync API builds its loop from that policy, so
+launching Chromium raised `NotImplementedError`. The page then sat on "searching…",
+which reads as slow rather than broken, and that is how it was reported. Always go
+through `browser.run()`, which hands Playwright's **async** API an explicit
+`ProactorEventLoop`. Don't reintroduce `playwright.sync_api` in app code, and don't
+"fix" it with `set_event_loop_policy`: that API is deprecated in 3.14 and is global
+state. (Test scripts outside the server can use the sync API.)
+
+**A stuck spinner is a bug.** Any shop section left on "searching…" means an event
+that will never come: a crash, a dropped stream, or a shop that isn't searched at
+all (Shopee and Qoo10 used to spin forever). The page marks unsearchable shops up
+front and `stopPending()` clears the rest on `done`, `error` and `onerror`.
+
 ## Per-shop reality (measured Sept 2026, not assumed)
 
 Product pages and search pages behave *differently* per shop — test both.
@@ -118,8 +143,8 @@ Product pages and search pages behave *differently* per shop — test both.
 |---|---|---|
 | Amazon | works well in a browser (~48 cards) | often bot-blocked via plain HTTP, fine in a browser |
 | Lazada | works, but **intermittent** — sometimes returns 0 after repeated searches | works with Playwright only (see invariant 2) |
-| eBay | blocked (error page) despite being scraper-friendly for product pages | usually works |
-| Shopee | no site-search support configured | item API returns 403 |
+| eBay | blocked: a **1.8 KB** "Error Page \| eBay" in 0.1 s, caught at once by `site_search.looks_blocked` (was a 9 s wait) | usually works |
+| Shopee | no site-search support configured (page shows "not searched") | item API returns 403 |
 | Qoo10 / schema.org sites | not configured | usually work |
 
 Note the inversion on Amazon: its *search* renders happily in a browser even when
@@ -139,7 +164,18 @@ own search page in Playwright and reads the result cards. This is the good path:
 - no web-search dependency and no shared query budget
 - result cards already carry prices, so a shop's whole result set costs **one**
   page render instead of one render per product
-- results stream **per shop**, so the UI fills in site by site
+- all shops are searched **at once** (one Chromium, one context per shop,
+  `asyncio.gather`), and each streams the moment it finishes
+- pages skip images, fonts and media (`browser.SKIPPED_RESOURCES`). Amazon's load
+  dropped from 9.6 s to 1.3 s, and Lazada still reads its sale price
+- a search page with no cards that is a bot wall or **under 20 KB** is reported as
+  refused straight away (`looks_blocked`). Real results pages are over 1 MB. A big
+  page with no cards yet still gets the full wait, so a slow shop is never
+  mistaken for a block
+
+Measured for "Sony WH-1000XM5": **30.0 s → 7.8 s** (first search after server start
+~15 s, because Chromium starts cold). Missing prices are fetched 3 at a time
+(`PRICE_LOOKUP_CONCURRENCY`). Refresh deliberately stays sequential with a 1.5 s gap.
 
 Selectors live on the adapter (`search_path`, `search_card`, `search_title`,
 `search_price`, `search_link`). Amazon puts two `h2`s in a card (brand, then
@@ -173,7 +209,14 @@ Both paths can be blocked, and both report it rather than returning an empty lis
 uvicorn app.main:app --reload                      # http://127.0.0.1:8000
 python -m tests.test_extraction                    # extraction, comparison, decisions, FX
 python -m tests.test_search                        # matching, URL filters, throttle detection
+python -m tests.test_currency                      # ranking/chart/target currency rules, DB upgrade
+python -m tests.test_shop_search                   # concurrency, block detection, --reload loop, page spinners
 ```
+
+`test_currency` points `database.DB_PATH` at a temp file and drives routes with
+`TestClient` *without* its context manager, so startup (FX download, scheduler)
+never runs. It stubs `main.refresh_product`, because tracking a product would
+otherwise fetch real shop pages.
 
 Python 3.14 + Playwright/chromium are already installed in `.venv`.
 

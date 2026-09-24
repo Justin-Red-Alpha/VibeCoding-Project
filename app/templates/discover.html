@@ -25,10 +25,12 @@
 </section>
 
 {% if query %}
+{# Only these get a search -- the rest are listed, but must not look like they're loading. #}
+{% set searching = shops|selectattr("searchable")|list|length %}
 <section class="card" id="summary-card">
     <h3>Best price found</h3>
     <p class="hint" id="progress">
-        Searching {{ shops|length }} shop{{ "" if shops|length == 1 else "s" }}…
+        Searching {{ searching }} shop{{ "" if searching == 1 else "s" }}…
         <span class="spinner" aria-hidden="true"></span>
     </p>
     <div id="summary" hidden>
@@ -53,9 +55,15 @@
     <h3 class="shop-heading">
         {{ shop.retailer }}
         <span class="shop-domain">{{ shop.domain }}</span>
-        <span class="shop-status" id="status-{{ shop.domain|replace('.', '-') }}">
+        {% if shop.searchable %}
+        <span class="shop-status" id="status-{{ shop.domain|replace('.', '-') }}" data-pending>
             <span class="spinner" aria-hidden="true"></span> searching…
         </span>
+        {% else %}
+        <span class="shop-status" id="status-{{ shop.domain|replace('.', '-') }}">
+            not searched — no site search for this shop yet
+        </span>
+        {% endif %}
     </h3>
     <table class="compare-table shop-table" hidden>
         <thead><tr><th>Track</th><th>Match</th><th>Price</th></tr></thead>
@@ -66,15 +74,15 @@
 
 <section class="card">
     <h3>Track the ones you ticked</h3>
-    <div class="add-source-form">
+    <div class="add-source-form track-form">
         <input type="text" name="name" value="{{ query }}" placeholder="Product name" required>
-        <input type="number" step="0.01" name="target_price" placeholder="Target price (optional)">
+        {% include "_target_price_field.html" %}
         <button type="submit" class="btn btn-primary">Track These</button>
     </div>
     <p class="hint">
         They become sources of one tracked product, re-checked automatically so you get a
-        BUY / WAIT verdict as the price moves. The target uses the currency of the first
-        selected listing that returns a currency.
+        BUY / WAIT verdict as the price moves. "Shop's currency" means the currency of the
+        first selected listing that reports one.
     </p>
 </section>
 </form>
@@ -89,6 +97,16 @@
 
     const money = (amount, currency) => `${currency || ""} ${Number(amount).toFixed(2)}`.trim();
     const domId = (domain) => domain.replace(/\./g, "-");
+
+    // When the stream ends early, no shop may keep spinning: that reads as "slow",
+    // when really nothing is coming.
+    function stopPending(text) {
+        document.querySelectorAll(".shop-status[data-pending]").forEach(el => {
+            el.removeAttribute("data-pending");
+            el.textContent = text;
+            el.className = "shop-status shop-status-error";
+        });
+    }
 
     // Build a row. Everything shop-supplied goes in via textContent, never HTML.
     function makeRow(row) {
@@ -176,7 +194,11 @@
         if (msg.type === "note" || msg.type === "error") {
             note.hidden = false;
             note.textContent = msg.message;
-            if (msg.type === "error") { progress.textContent = "Search stopped."; stream.close(); }
+            if (msg.type === "error") {
+                progress.textContent = "Search stopped.";
+                stream.close();
+                stopPending("not searched — the search stopped");
+            }
             return;
         }
 
@@ -194,14 +216,15 @@
                 if (msg.rows.length) body.closest("table").hidden = false;
             }
             if (status) {
+                status.removeAttribute("data-pending");
                 status.textContent = msg.error
                     ? msg.error
                     : `${msg.rows.length} result${msg.rows.length === 1 ? "" : "s"}`;
                 status.className = msg.error ? "shop-status shop-status-error" : "shop-status";
             }
             progress.innerHTML =
-                `Searched ${shopsDone} of {{ shops|length }} shops…` +
-                (shopsDone < {{ shops|length }} ? ` <span class="spinner" aria-hidden="true"></span>` : "");
+                `Searched ${shopsDone} of {{ searching }} shops…` +
+                (shopsDone < {{ searching }} ? ` <span class="spinner" aria-hidden="true"></span>` : "");
             return;
         }
 
@@ -217,6 +240,7 @@
 
         if (msg.type === "done") {
             stream.close();
+            stopPending("not searched");  // e.g. web-search fallback: no per-shop reply
             progress.textContent = `${msg.priced} listing${msg.priced === 1 ? "" : "s"} priced.`;
 
             for (const [index, flags] of Object.entries(msg.flags || {})) {
@@ -255,9 +279,10 @@
 
     stream.onerror = () => {
         stream.close();
-        if (shopsDone < {{ shops|length }}) {
-            progress.textContent = `Stopped after ${shopsDone} of {{ shops|length }} shops. Reload to retry.`;
+        if (shopsDone < {{ searching }}) {
+            progress.textContent = `Stopped after ${shopsDone} of {{ searching }} shops. Reload to retry.`;
         }
+        stopPending("not searched — the connection dropped");
     };
 })();
 </script>

@@ -307,34 +307,32 @@ def _render_with_playwright(url: str, timeout: int, adapter=None) -> str | None:
     run, so this waits for the price node rather than guessing a sleep duration.
     """
     try:
-        from playwright.sync_api import sync_playwright
+        import playwright.async_api  # noqa: F401
     except ImportError:
         return None
+    from . import browser  # imports this module, so not at the top
 
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
-        try:
-            context = browser.new_context(
-                user_agent=BROWSER_HEADERS["User-Agent"],
-                locale="en-SG",
-                viewport={"width": 1366, "height": 900},
-            )
-            page = context.new_page()
-            page.goto(url, timeout=timeout * 1000, wait_until="load")
+    return browser.run(_render(url, timeout, adapter))
 
-            # Prefer waiting for the actual price element over a fixed sleep.
-            for selector in (adapter.selectors if adapter else []):
-                try:
-                    page.wait_for_selector(selector, timeout=8000)
-                    break
-                except Exception:
-                    continue
-            else:
-                page.wait_for_timeout(6000)
 
-            return page.content()
-        finally:
-            browser.close()
+async def _render(url: str, timeout: int, adapter) -> str:
+    from .browser import chromium, new_page
+
+    async with chromium() as instance:
+        page = await new_page(instance)
+        await page.goto(url, timeout=timeout * 1000, wait_until="load")
+
+        # Prefer waiting for the actual price element over a fixed sleep.
+        for selector in (adapter.selectors if adapter else []):
+            try:
+                await page.wait_for_selector(selector, timeout=8000)
+                break
+            except Exception:
+                continue
+        else:
+            await page.wait_for_timeout(6000)
+
+        return await page.content()
 
 
 # --- entry point ----------------------------------------------------------

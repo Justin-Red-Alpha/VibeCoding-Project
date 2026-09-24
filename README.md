@@ -50,15 +50,17 @@ needs Playwright, and it's much better than going through a web search engine:
 no shared query budget, and the shop's result cards already carry prices, so one
 page render prices a whole shop's results.
 
-Results stream **per shop**, so the page fills in site by site instead of waiting
-for the slowest one.
+All shops are searched **at the same time** and each one appears the moment it
+finishes, so a slow or blocked shop never holds the others up. Pages load without
+images, fonts or video, since prices and titles are text. That alone cut Amazon's
+page load from ~9.6s to ~1.3s.
 
 | Shop | Site search |
 |---|---|
 | **Amazon** | works well (~48 cards) — note its *search* renders fine in a browser even when its *product* pages serve bot checks |
 | **Lazada** | works, but **intermittent** — repeated searches sometimes return 0 |
-| **eBay** | blocked, returns an error page |
-| **Shopee / Qoo10** | not configured |
+| **eBay** | blocked: answers with a tiny error page, reported as "refusing automated searches" in about a second |
+| **Shopee / Qoo10** | no site search yet, shown as "not searched" |
 
 Without Playwright the app falls back to DuckDuckGo's HTML endpoint, which needs no
 setup but **rate-limits** after roughly 15–20 queries and stays blocked a while. It
@@ -119,10 +121,12 @@ something looks off — `looks like an accessory (case, cover)`,
 `model-number-missing`, `used/refurbished`, `price far below the others`. High
 confidence ones are pre-ticked; everything else is your call.
 
-Each shop gets its own section, filled in the moment that shop's search finishes —
-Amazon typically lands around 5s, the next a few seconds later. A full run across
-three shops takes **30–60 seconds**, mostly browser rendering. Lower
-`DISCOVER_PER_SHOP` / `DISCOVER_PRICE_LIMIT` to speed it up.
+Each shop gets its own section, filled in the moment that shop's search finishes.
+Measured for "Sony WH-1000XM5": eBay reports in ~1s, Amazon ~2.5s, Lazada ~3.3s,
+and the whole search, including looking up missing prices (3 at a time), takes
+**~8 seconds** (it was 30). The first search after starting the server can take ~7s
+longer while Chromium starts cold. Lower `DISCOVER_PER_SHOP` /
+`DISCOVER_PRICE_LIMIT` to speed it up further.
 
 The **best price** headline only ever uses listings that plausibly are the product
 you searched for. A cheaper *different* model, or a listing flagged
@@ -168,10 +172,15 @@ from ranking.
 - Else by percentile of the current best price: bottom 25% → `BUY NOW`,
   top 25% → `WAIT`, middle → `NEUTRAL`
 
-The target is in the product's primary currency (the first successful source with a
-known currency). When you choose a display currency, the target is converted before
-it is compared with the converted price history. If that conversion is unavailable,
-the target is shown but does not affect the verdict.
+The target is in whatever currency you pick next to it. The picker defaults to the
+currency you're viewing prices in. Leave it on **Shop's currency** and the target
+uses the product's primary currency (the first successful source with a known
+currency). Before the target is compared with the price history, it is converted
+into the history's currency: your display currency if you picked one, otherwise the
+primary currency. So a target of MYR 800 is read as about SGD 250, not SGD 800. The
+product page shows both figures. If no rate is available, the target is shown but
+does not affect the verdict. The target is stored as you typed it and is never
+rewritten.
 
 ## 6. Currency conversion
 
@@ -222,13 +231,21 @@ uvicorn app.main:app --reload
 ```powershell
 python -m tests.test_extraction   # extraction, comparison, decisions
 python -m tests.test_search       # matching, URL filtering, throttle detection
+python -m tests.test_currency     # what may be ranked, charted or compared with a target
+python -m tests.test_shop_search  # concurrent shops, block detection, browser start-up
 ```
+
+`test_shop_search` is offline too. Its browser checks run local Chromium against
+in-memory pages, never a shop.
 
 Covers every extraction strategy against fixtures, multi-currency parsing
 (`Rp1.234.567` vs `1,234.56`), bot-wall and throttle detection, product-vs-accessory
 matching, price outliers, cross-retailer comparison, currency conversion (including
 that originals stay untouched and unconvertible currencies never win) and every
-verdict branch.
+verdict branch. `test_currency` also checks that unknown-currency prices are never
+ranked or charted, that target prices are converted before they are compared, and
+that the database upgrade keeps existing products. It uses a throwaway database,
+never `data/app.db`.
 
 ## Adding a shop
 

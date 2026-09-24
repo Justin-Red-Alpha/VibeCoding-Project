@@ -33,8 +33,8 @@
     {% if product.target_price is not none %}
         <p class="hint">
             Your target price: {{ target_currency or "currency unknown" }} {{ "%.2f"|format(product.target_price) }}
-            {% if target_display_price is not none and target_currency != display_currency %}
-                ({{ display_currency }} {{ "%.2f"|format(target_display_price) }} for this view)
+            {% if target_display_price is not none %}
+                ({{ history_currency }} {{ "%.2f"|format(target_display_price) }} for this view)
             {% endif %}
         </p>
         {% if target_not_applied %}
