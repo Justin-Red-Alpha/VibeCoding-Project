@@ -1,0 +1,58 @@
+# Web — implementation map
+
+> The functor ARCHITECTURE.md → code. Keep it in sync **with** the code (§6.3).
+
+## Objects (Dat) → code
+| Object | Form / shape | Realised at | State |
+| --- | --- | --- | --- |
+| `ProductView` | dict built per request | `app/main.py:_product_view` | built |
+| `SseEvent` | `data: {json}` frames | `app/main.py:_sse` | built |
+| `CandidateRow` | dict per listing | `app/main.py:_candidate_row` | built |
+| target field | amount + currency `<select>` | `app/templates/_target_price_field.html:target_currency` | built |
+| headline threshold | `0.45` | `app/main.py:MIN_HEADLINE_SCORE` | built |
+| lookup concurrency | `3` | `app/main.py:PRICE_LOOKUP_CONCURRENCY` | built |
+
+## Morphisms (Trn / relations) → code
+| Morphism | Signature | Realising code | State |
+| --- | --- | --- | --- |
+| `product_view` | `Product → ProductView` | `app/main.py:_product_view` | built |
+| latest per source | `PriceSnapshot* → Latest` | `app/main.py:_latest_per_source` | built |
+| `chart_points` | `… → ChartPoint*` | `app/main.py:_chart_points` | built |
+| `discover_stream` | `Query → SseEvent*` | `app/main.py:discover_stream` | built |
+| `last = done` | `Candidate* → Summary` | `app/main.py:_discovery_summary` | built |
+| `target_currency?` | `Form → Currency` | `app/main.py:_target_currency` | built |
+| display currency | `() → Currency?` | `app/main.py:display_currency` | built |
+| route: dashboard | `GET /` | `app/main.py:dashboard` | built |
+| route: product page | `GET /product/{id}` | `app/main.py:product_detail` | built |
+| route: discover page | `GET /discover` | `app/main.py:discover_page` | built |
+| route: track | `POST /discover/track` | `app/main.py:track_from_discovery` | built |
+| route: add product | `POST /products` | `app/main.py:create_product` | built |
+| route: add source | `POST /products/{id}/sources` | `app/main.py:create_source` | built |
+| route: set display currency | `POST /settings/currency` | `app/main.py:set_display_currency` | built |
+| route: refresh one | `POST /products/{id}/refresh` | `app/main.py:refresh_one` | built |
+| route: refresh all | `POST /refresh` | `app/main.py:refresh_everything` | built |
+| startup | FX + scheduler | `app/main.py:lifespan` | built |
+| JS: render a row | `row → <tr>` | `app/templates/discover.html:makeRow` | built |
+| JS: paint a price | `row → cell` | `app/templates/discover.html:paintPrice` | built |
+| JS: terminal states | `sections → terminal` | `app/templates/discover.html:stopPending` | built |
+| target shown both ways | `ProductView → HTML` | `app/templates/product.html:target_display_price` | built |
+| edit target after creation | `Product → Product` | none | planned |
+
+## Composition rules → where enforced
+| Rule (ARCHITECTURE §6) | Enforced at | Tested at |
+| --- | --- | --- |
+| 1. headline only from plausible listings | `app/main.py:_discovery_summary` | `tests/test_search.py:test_headline_price_ignores_poor_matches` |
+| 1. suspect price never headlines | `app/main.py:_discovery_summary` | `tests/test_search.py:test_headline_ignores_suspect_price_despite_good_title` |
+| 3. no stuck spinner | `app/templates/discover.html:stopPending` | `tests/test_shop_search.py:test_page_never_leaves_shops_spinning` |
+| 4. one currency per chart line | `app/main.py:_chart_points` | `tests/test_currency.py:test_chart_points` |
+| 5. ≤3 concurrent lookups, streamed | `app/main.py:discover_stream` | `tests/test_shop_search.py:test_price_lookups_run_concurrently` |
+| browser failure becomes an error event | `app/main.py:discover_stream` | `tests/test_shop_search.py:test_browser_failure_becomes_error_event` |
+| 6. target currency validated | `app/main.py:_target_currency` | `tests/test_currency.py:test_forms_store_target_currency` |
+| 6. picker defaults to display currency | `app/templates/_target_price_field.html:current_display_currency` | `tests/test_currency.py:test_forms_default_to_display_currency` |
+| target shown as entered and as compared | `app/templates/product.html:target_display_price` | `tests/test_currency.py:test_product_page_shows_both_figures` |
+
+## Notes / divergences
+- Rule 2 (the JS is a dumb renderer) is a convention with no automated check.
+- Rule 7 (chart colours) is enforced in `product_detail`'s `color_index` and is
+  untested.
+- `SseEvent` has no single declaration. See ARCHITECTURE §9 and the suggestions.

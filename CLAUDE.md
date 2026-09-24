@@ -4,6 +4,22 @@ Orientation for anyone (human or Claude) picking this up cold. `README.md` is th
 user-facing guide; this file is about **why the code is shaped this way**, and the
 traps that will bite you if you "simplify" it.
 
+**The same system as a checkable model lives in `docs/`.** It's the supercharge
+docs tree, written in FRAMEWORK.md's Dat/Trn/Loc/Trm terms.
+
+- `docs/architecture-map.md`: the whole-system map and the coherence checklist.
+- `docs/<component>/ARCHITECTURE.md`: each component's intent. The components are
+  discovery, extraction, browser, storage, analysis, fx, web and refresh.
+- `docs/<component>/IMPLEMENTATION.md`: maps every object and morphism to a
+  `file:symbol`.
+- `docs/STATUS.md`: what's built and what isn't.
+- `docs/sessions/`: handoff logs. Read the newest first.
+
+When you change code, update the touched component's `IMPLEMENTATION.md` rows **in
+the same change**, then run
+`bash ~/.claude/skills/supercharge/scripts/drift-check.sh`. It fails on any
+`file:symbol` that no longer resolves.
+
 Local FastAPI app. Type a product name → search shops → price the matches → user
 confirms which are the same item → track them → automatic BUY/WAIT verdict.
 
@@ -222,7 +238,10 @@ Python 3.14 + Playwright/chromium are already installed in `.venv`.
 
 ## Open / known-incomplete
 
-- Keyed search providers are scaffolded but unverified.
+- Keyed search providers (SerpAPI, Brave, eBay Browse) are **not built**:
+  `available_providers()` returns only DuckDuckGo. (This line used to say
+  "scaffolded", which was never true.)
+- `refresh` has no offline tests (see `docs/refresh/STATUS.md`).
 - Converted history uses *today's* rate for all snapshots (fine within one
   currency; across currencies the series reflects today's rate, not each day's).
 - FX figures are mid-market — they exclude shipping, card FX fees and import duty.
