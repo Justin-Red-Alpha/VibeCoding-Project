@@ -57,6 +57,10 @@ graph LR
 | `last = done` | `SseEvent* → Summary` | Total | outlier flags, best price, savings |
 | `best_price?` | `Summary → ℝ` | Partial | only from `score ≥ 0.45 ∧ ¬price_suspect` |
 | `target_currency?` | `Form → Currency` | Partial | `''` → NULL. Must be in `DISPLAY_CURRENCIES`, else HTTP 400 |
+| `unavailable` | `DatabaseUnavailable → 503 page` | Total | any route whose database read fails answers with the outage page |
+| `healthz` | `() → {app, database}` | Total | 200 when `db.ping` answers, else 503. Never names the backend, host or URL |
+| `cron_daily` | `Request → Report` | Partial (secret) | 404 with no `CRON_SECRET`; 401 without the exact `Bearer` secret; else `refresh.daily_run` |
+| `public_host` | `Request → Host` | Total | `x-forwarded-host` when present (behind the proxy), else `host`. What the cross-site guard compares against |
 
 ## 5. Functors
 **Page-state functor (discover page).** Each shop section maps into the poset
@@ -85,6 +89,15 @@ search").
    (`origin?` set), which count only in history and the verdict. Adding a product,
    tracking from discovery or adding a source queues an archive lookup
    (`history.schedule_backfill`) and never waits for it.
+9. **An outage is never empty data.** `DatabaseUnavailable` from any route
+   becomes one 503 page ("We couldn't load your data"), never "Nothing tracked
+   yet". The page is standalone: `base.html` reads the signed-in user from the
+   database, which is what just failed.
+10. **`/healthz` reveals only two words.** `{"app": "ok", "database": "ok" |
+    "unreachable"}`, no configuration.
+11. **The cron route does nothing without the secret.** The comparison is
+    constant-time (`hmac.compare_digest`). An unset secret makes the route a 404,
+    so a misconfigured host can't run it.
 
 ## 7. Atoms owned (FRAMEWORK §4)
 **Trn**: routes (`dashboard`, `product_detail`, `discover_page`, `discover_stream`,
@@ -94,12 +107,16 @@ search").
 `_target_currency`, `_candidate_row`). The JS renderers are `makeRow`,
 `paintPrice` and `stopPending`.
 **Loc**: `ServerProc` (uvicorn: request workers plus the price-lookup pool) and
-`UserBrowser` (the page).
+`UserBrowser` (the page). When hosted, `ServerProc` runs on a `VercelInstance`,
+and pages reach it through `VercelEdge`.
 **Trm**:
 - `t_page : ServerProc → UserBrowser`, carrying HTML
 - `t_form : UserBrowser → ServerProc`, carrying form fields
 - `t_sse : ServerProc → UserBrowser`, carrying `SseEvent*`
 - `t_future : lookup pool → request worker`, carrying `PriceResult ⊕ ScrapeError`
+- hosted only (owned by delivery): `t_edge`, HTTPS between `UserBrowser`,
+  `VercelEdge` and `ServerProc`, which is why the guard reads the forwarded host;
+  and `t_cron`, the host's daily trigger to `cron_daily`
 
 **Placements (§4.2)**:
 - target-currency validation runs in `UserBrowser` (the `<select>`) and in

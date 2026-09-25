@@ -46,6 +46,7 @@
 | 1. first account is admin, claims unowned | `app/database.py:create_user` | `tests/test_auth.py:test_storage` |
 | 2. at least one enabled admin | `app/database.py:guarded_user_change` | `tests/test_auth.py:test_last_admin_guard` |
 | 2. …even when two admins race | `app/database.py:guarded_user_change` | `tests/test_auth.py:test_review_admins_cannot_both_demote` |
+| 1. …even when first sign-ups race (both engines) | `app/database.py:write_transaction` | `tests/test_hosting.py:test_first_sign_up_race` |
 | 3. salted scrypt only | `app/auth.py:hash_password` | `tests/test_auth.py:test_passwords` |
 | 4. sessions hashed at rest; end on disable | `app/auth.py:start_session` | `tests/test_auth.py:test_sessions` |
 | 5. one failure message; dummy hash | `app/auth.py:authenticate` | `tests/test_auth.py:test_sign_in_and_throttle` |
@@ -54,6 +55,8 @@
 | 7. ownership on every product route | `app/auth.py:product_for` | `tests/test_auth.py:test_products_are_private` |
 | 8. local redirects only | `app/auth.py:local_path` | `tests/test_auth.py:test_account_routes` |
 | cross-site POST refused | `app/main.py:SameSitePostGuard` | `tests/test_auth.py:test_same_site_guard` |
+| …compared with the forwarded host behind the proxy | `app/main.py:SameSitePostGuard` | `tests/test_hosting.py:test_forwarded_host` |
+| cookie `Secure` over https | `app/auth.py:set_session_cookie` | `tests/test_hosting.py:test_secure_cookie_over_https` |
 | admin page admins only | `app/auth.py:require_admin` | `tests/test_auth.py:test_admin_page` |
 
 ## Notes / divergences

@@ -14,6 +14,7 @@ the WH-1000XM5). It does nothing for Lazada and Shopee, by design, and BuyWhere
 | Wayback lookup, filters, backfill, scheduling | ✅ built | 2026-09-24 |
 | politeness (4 s gap, stop on 429/refusal, pause) | ✅ built | added after this IP was blocked during verification |
 | product page: note, button, archived marker | ✅ built | |
+| resumable under a deadline (`stop`, `CUT_SHORT_REASON`) | ✅ built | 2026-09-25, for the daily cron run |
 | Lazada / Shopee history | ⬜ unbuilt | archived copies carry only the list price; needs BuyWhere or similar |
 | BuyWhere adapter | ⬜ unbuilt | its API was unreachable on 2026-09-24 |
 | archived points marked on the chart | ⬜ unbuilt | shown in the table and note only |

@@ -10,7 +10,7 @@ docs tree, written in FRAMEWORK.md's Dat/Trn/Loc/Trm terms.
 - `docs/architecture-map.md`: the whole-system map and the coherence checklist.
 - `docs/<component>/ARCHITECTURE.md`: each component's intent. The components are
   discovery, extraction, browser, storage, analysis, fx, web, refresh, history,
-  auth and settings.
+  auth, settings and delivery.
 - `docs/<component>/IMPLEMENTATION.md`: maps every object and morphism to a
   `file:symbol`.
 - `docs/STATUS.md`: what's built and what isn't.
@@ -18,8 +18,10 @@ docs tree, written in FRAMEWORK.md's Dat/Trn/Loc/Trm terms.
 
 When you change code, update the touched component's `IMPLEMENTATION.md` rows **in
 the same change**, then run
-`bash ~/.claude/skills/supercharge/scripts/drift-check.sh`. It fails on any
-`file:symbol` that no longer resolves.
+`bash scripts/drift-check.sh` (the vendored copy CI runs; identical to
+`~/.claude/skills/supercharge/scripts/drift-check.sh` below its header). It fails
+on any `file:symbol` that no longer resolves. New files must be tracked by git
+(`git add -N` is enough) or their references count as dead.
 
 Local FastAPI app. Type a product name → search shops → price the matches → user
 confirms which are the same item → track them → automatic BUY/WAIT verdict.
@@ -43,7 +45,7 @@ search/providers                                          decide)         SSE st
 
 Each stage is independently testable, and `tests/` mostly tests stages, not routes.
 
-## Data model (SQLite, plain `sqlite3`, no ORM on purpose)
+## Data model (SQLite locally, Postgres when hosted; plain SQL, no ORM on purpose)
 
 ```
 users       (id, username NOCASE UNIQUE, password_hash, role user|admin,
@@ -84,6 +86,9 @@ These each cost real debugging. Please don't undo them.
    `providers._looks_throttled()` (DuckDuckGo answers a throttled client with
    HTTP 202 + an "anomaly" page). Without them the UI would claim "no products
    found" and send the user hunting for a CSS selector that can never work.
+   **The same goes for the database:** an unreachable one raises
+   `db.DatabaseUnavailable`, and every page answers with a 503 ("We couldn't load
+   your data"), never "Nothing tracked yet". Don't catch it in a route.
 
 4. **Never rank different currencies by magnitude.** 4,000 PHP is not cheaper than
    95 SGD. Without a display currency, off-currency sources are shown but excluded
@@ -137,7 +142,61 @@ These each cost real debugging. Please don't undo them.
 11. **The first account is the admin, and it claims unowned products.** Tests,
     scripts and live checks must never register on the owner's real
     `data/app.db`, or the admin slot is taken. Use `tests/helpers.py` (temp DB),
-    or an isolated app instance with a temp `DB_PATH`.
+    or an isolated app instance with a temp `DB_PATH`. **Tests never touch the
+    hosted database either:** every suite starts by dropping the whole schema, so
+    `helpers.use_temp_db()` refuses a `TEST_DATABASE_URL` whose host isn't
+    `localhost`/`127.0.0.1`, or that equals `DATABASE_URL`, before anything runs.
+    On the hosted site, register the admin account straight after the first
+    deploy.
+
+## Hosted mode (Vercel + Neon)
+
+Plan and reasons: `openspec/changes/ci-cd-and-vercel-hosting/design.md` (until
+archived), then `docs/delivery/` and `docs/storage/`. It's a personal dev
+deployment; no launch is planned.
+
+- **One storage port, two adapters.** `db.get_connection()` returns SQLite
+  (default, `DB_PATH`) or pooled Postgres when `DATABASE_URL` is set (Neon injects
+  it). Nothing outside `app/database.py` imports `sqlite3` or `psycopg`: catch
+  `db.IntegrityError` and `db.DatabaseUnavailable`, and read rows by name, index,
+  `.keys()` or `dict(row)`.
+- **Write SQL once, for both engines:**
+  - placeholders are `?` (the adapter rewrites them to `%s`);
+  - the schema's two dialect differences are the `{pk}` and `{username}` tokens
+    in `SCHEMA` (`CITEXT` on Postgres keeps usernames case-insensitive);
+  - money columns are `DOUBLE PRECISION` (trap below);
+  - new ids come from `INSERT … RETURNING id`, never `lastrowid`;
+  - every list query's `ORDER BY` ends with `id`, since Postgres doesn't break
+    ties by insertion order;
+  - write `NULLS FIRST`/`LAST` explicitly (the engines' defaults differ);
+  - timestamps stay ISO-8601 text.
+- **"Only if fewer than N" rules go through `db.write_transaction(conn)`**, the one
+  exclusive-write primitive (`BEGIN IMMEDIATE` on SQLite; see the lock-first trap
+  for Postgres).
+- **Scheduling: `SCHEDULER_MODE = in-process ⊕ cron`.** Locally and in plain
+  Docker, the 6-hour APScheduler job runs as before. On Vercel (`cron`) there's
+  no interval job: Vercel Cron calls `GET /cron/daily` once a day with
+  `Authorization: Bearer $CRON_SECRET`. The route is a 404 when the secret is
+  unset, and does no work without the right secret. `scheduler.daily_run`
+  re-checks the stalest listings until 150 s, then finishes unchecked archive
+  lookups until 230 s (the request limit is 300 s). What it doesn't reach is
+  picked up next time from stored state (stale listings,
+  `history_checked_at IS NULL`), not a queue. The admin page shows "once a day,
+  set by the host" and ignores a posted interval.
+- **Behind the proxy:** the image runs uvicorn with `--proxy-headers`, so the
+  cookie is `Secure` over https. `SameSitePostGuard` compares Origin/Referer with
+  `x-forwarded-host` when present, else `host`.
+- **Delivery:** `.github/workflows/ci.yml` runs the seven suites on Ubuntu and
+  Windows, again on Postgres 17, the drift check, and a smoke test of
+  `Dockerfile.vercel` (the same file Vercel builds). Only then does a push to
+  `main` deploy (`vercel deploy --prod`), and only if `VERCEL_TOKEN` exists
+  (otherwise it's skipped with a notice). `vercel.json` turns Vercel's Git
+  auto-deploy off, so nothing bypasses the gate. **Exception, for now:** the
+  owner is trying Vercel's Git auto-deploy, so `vercel.json` is written but
+  **uncommitted**. Pushes deploy ungated, there's no cron, and the region is the
+  default. Don't commit `vercel.json` or set `VERCEL_TOKEN` without asking.
+- `GET /healthz` returns `{"app","database"}` with 200 or 503, and never the
+  backend, host or URL.
 
 ## Traps already hit (don't rediscover these)
 
@@ -202,6 +261,46 @@ with `curl -N --no-buffer`, not TestClient.
 
 **Windows console encoding.** Printing `₫`/`₱` etc. via the venv python crashes with
 a cp1252 `UnicodeEncodeError`. Prefix test runs with `PYTHONIOENCODING=utf-8`.
+
+**Postgres `REAL` is 4 bytes.** It keeps about 7 significant digits, so IDR
+1,234,567.89 would be stored rounded, with no error. That's why money is
+`DOUBLE PRECISION` on both engines (SQLite reads it as its own 8-byte REAL).
+`test_hosting.test_money_keeps_every_digit` pins it.
+
+**Lock first, then count (Postgres).** `write_transaction` takes
+`pg_advisory_xact_lock` as the transaction's *first* statement, under READ
+COMMITTED (pinned in `_configure_pg`). Measured on 2026-09-25 with four racing
+first sign-ups: without the lock, 2–4 admins per race; with the lock but
+REPEATABLE READ, 3–4, because the snapshot is taken before the wait and the
+count misses the other commit. Don't "upgrade" the isolation level, and don't
+put a query before the lock.
+
+**Concurrent cold starts collide on `CREATE TABLE IF NOT EXISTS`.** Two Vercel
+instances starting together can make Postgres reject the second schema run.
+`init_db` holds `pg_advisory_xact_lock(SCHEMA_LOCK)` for the whole schema.
+
+**Pooled connections remember dropped types.** After `DROP SCHEMA public CASCADE`
+(the test reset), psycopg's auto-prepared statements still name the old `citext`
+type ("cache lookup failed for type …"). `helpers.empty_db()` closes the pool
+after a reset. Only tests drop schemas.
+
+**The image is 1.32 GB unpacked (~353 MB compressed).** It's Chromium's headless
+shell only (`playwright install --only-shell`). Whether Vercel accepts it is
+settled by the first deploy. Don't switch to the full Chromium build.
+
+**Background threads may freeze on Vercel once a response is sent.** `run_once`
+jobs (archive lookups, "refresh my prices") are best-effort there. The daily
+cron run is the backstop, and it works *inside* its request. Don't move that work
+into a thread.
+
+**Behind Vercel's proxy, `host` may be an internal name.** Hence the
+forwarded-host rule above. Which header Vercel actually fills is confirmed at the
+first deploy; record the answer here.
+
+**`/cron/daily` makes real requests.** Called against a database that holds
+listings, it fetches real shop pages and asks the Internet Archive. On 2026-09-25
+a local image smoke test ran it against the test Postgres with leftover fixtures,
+and it hit amazon.com twice and the archive once. Empty the database first.
 
 **`--reload` + Playwright's sync API = every search dies (Windows).** With
 `--reload`, uvicorn 0.30 sets the process-wide policy to the Selector event loop,
@@ -296,11 +395,25 @@ python -m tests.test_currency                      # ranking/chart/target curren
 python -m tests.test_shop_search                   # concurrency, block detection, --reload loop, page spinners
 python -m tests.test_history                       # archived prices: matching, filters, back-off, live-only current
 python -m tests.test_auth                          # accounts, sessions, ownership, admin page, cross-site guard
+python -m tests.test_hosting                       # both engines, outage page, /healthz, cron + daily run, proxy
+bash scripts/drift-check.sh                        # docs ↔ code (CI runs it too)
 ```
 
-`test_currency` points `database.DB_PATH` at a temp file and drives routes with
-`TestClient` *without* its context manager, so startup (FX download, scheduler)
-never runs. It stubs `main.refresh_product`, because tracking a product would
+Against Postgres, like CI's `postgres` job (Docker Desktop must be running):
+
+```powershell
+docker run -d --name pt-pg -p 5433:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=test postgres:17
+$env:TEST_DATABASE_URL = "postgresql://postgres:postgres@localhost:5433/test"   # then any suite
+docker build -f Dockerfile.vercel -t price-tracker . ; docker run --rm -p 8080:80 price-tracker
+```
+
+Route tests need `requirements-dev.txt` (httpx).
+
+Every suite that touches the database goes through `tests/helpers.py`
+(`use_temp_db`, `reset_db`, `empty_db`): a temp SQLite file, or the
+`TEST_DATABASE_URL` Postgres. Route tests drive `TestClient` *without* its
+context manager, so startup (FX download, scheduler) never runs.
+`test_currency` stubs `main.refresh_product`, because tracking a product would
 otherwise fetch real shop pages.
 
 Python 3.14 + Playwright/chromium are already installed in `.venv`.
@@ -316,7 +429,13 @@ Python 3.14 + Playwright/chromium are already installed in `.venv`.
 - Converted history uses *today's* rate for all snapshots (fine within one
   currency; across currencies the series reflects today's rate, not each day's).
 - FX figures are mid-market — they exclude shipping, card FX fees and import duty.
-- **Auth is built for localhost.** SameSite=Lax cookies plus an Origin/Referer
-  guard stand in for per-form CSRF tokens, the login throttle is in memory, and
-  there's no password change or reset. Before exposing the app, add CSRF tokens
-  and HTTPS (the cookie turns `Secure` on https by itself).
+- **Auth is built for localhost and a personal dev deployment.** SameSite=Lax
+  cookies plus an Origin/Referer guard stand in for per-form CSRF tokens, the
+  login throttle is in memory (per Vercel instance), and there's no password
+  change or reset. These stay on the to-do list, low priority, since no launch is
+  planned. HTTPS is handled: behind Vercel's proxy the cookie is `Secure`.
+- **Hosting isn't live yet (2026-09-25).** The code, image, workflow and
+  `vercel.json` are built and pass locally on both engines. Still to do: the
+  first CI run on GitHub, the owner's Vercel setup (Container Images,
+  `CRON_SECRET`, `SCHEDULER_MODE=cron`, the three GitHub secrets), and the first
+  deploy. Neon is installed. See `docs/delivery/STATUS.md`.

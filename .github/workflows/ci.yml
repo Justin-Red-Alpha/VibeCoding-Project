@@ -1,0 +1,190 @@
+# Checks every push to main and every pull request; deploys main only when all
+# of it passes. Design: openspec/changes/ci-cd-and-vercel-hosting/design.md (D3).
+#
+#   test       the suites on Ubuntu and Windows (SQLite), plus the docs drift check
+#   postgres   the same suites against a real Postgres 17, the engine production uses
+#   container  builds Dockerfile.vercel (what Vercel runs) and smoke-tests it
+#   deploy     main only, after all three: Vercel production via the CLI
+#
+# Vercel's own Git auto-deploy is off (vercel.json), so a red build never ships.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHONIOENCODING: utf-8
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install
+        run: |
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+          python -m playwright install --with-deps --only-shell chromium
+      - name: Byte-compile
+        run: python -m compileall -q app tests
+      - name: test_extraction
+        run: python -m tests.test_extraction
+      - name: test_search
+        run: python -m tests.test_search
+      - name: test_currency
+        run: python -m tests.test_currency
+      - name: test_shop_search
+        run: python -m tests.test_shop_search
+      - name: test_history
+        run: python -m tests.test_history
+      - name: test_auth
+        run: python -m tests.test_auth
+      - name: test_hosting
+        run: python -m tests.test_hosting
+      - name: Docs drift check
+        if: runner.os == 'Linux'
+        run: bash scripts/drift-check.sh
+
+  postgres:
+    name: test (postgres 17)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The service container only. tests/helpers.py refuses any non-local host,
+      # because every suite starts by dropping the whole schema.
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install
+        run: |
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+          python -m playwright install --with-deps --only-shell chromium
+      - name: test_extraction
+        run: python -m tests.test_extraction
+      - name: test_search
+        run: python -m tests.test_search
+      - name: test_currency
+        run: python -m tests.test_currency
+      - name: test_shop_search
+        run: python -m tests.test_shop_search
+      - name: test_history
+        run: python -m tests.test_history
+      - name: test_auth
+        run: python -m tests.test_auth
+      - name: test_hosting
+        run: python -m tests.test_hosting
+
+  container:
+    name: container smoke test
+    needs: [test, postgres]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build Dockerfile.vercel
+        run: docker build -f Dockerfile.vercel -t price-tracker:ci .
+      - name: Start it
+        run: docker run -d --name app -p 8080:80 price-tracker:ci
+      - name: /healthz answers 200
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/healthz || true)
+            [ "$code" = 200 ] && { echo "healthy after ${i}s"; curl -s http://localhost:8080/healthz; echo; exit 0; }
+            sleep 1
+          done
+          echo "::error::/healthz never answered 200 (last: $code)"
+          exit 1
+      - name: The sign-in page loads
+        run: test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/login)" = 200
+      - name: Chromium renders inside the image
+        run: docker run --rm price-tracker:ci python -m tests.test_shop_search
+      - name: Container log
+        if: always()
+        run: docker logs app
+
+  deploy:
+    name: deploy (production)
+    needs: [test, postgres, container]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      # Optional repository variable, e.g. https://<project>.vercel.app. Without
+      # it the health check uses the deployment's own URL.
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+    steps:
+      - name: Deploy credentials present?
+        id: creds
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::notice title=Deploy skipped::No VERCEL_TOKEN secret in this repository yet, so nothing was deployed. Add VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID (Settings > Secrets and variables > Actions) to turn deploys on."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v7
+        if: steps.creds.outputs.skip != 'true'
+      - uses: actions/setup-node@v7
+        if: steps.creds.outputs.skip != 'true'
+        with:
+          node-version: 22
+      - name: Deploy to Vercel production
+        id: deploy
+        if: steps.creds.outputs.skip != 'true'
+        run: |
+          url=$(npx --yes vercel@60.0.1 deploy --prod --yes --token "$VERCEL_TOKEN")
+          echo "Deployed: $url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Production /healthz answers 200
+        if: steps.creds.outputs.skip != 'true'
+        run: |
+          base="${PRODUCTION_URL:-${{ steps.deploy.outputs.url }}}"
+          for i in $(seq 1 24); do
+            code=$(curl -s -o /tmp/health -w '%{http_code}' "$base/healthz" || true)
+            if [ "$code" = 200 ]; then echo "healthy: $(cat /tmp/health)"; exit 0; fi
+            if [ "$code" = 401 ] || [ "$code" = 403 ]; then
+              echo "::error::$base is behind Vercel's deployment protection ($code). Set the repository variable PRODUCTION_URL to the public production domain."
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::$base/healthz never answered 200 (last: $code $(cat /tmp/health 2>/dev/null))"
+          exit 1

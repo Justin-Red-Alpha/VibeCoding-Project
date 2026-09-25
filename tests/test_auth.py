@@ -47,9 +47,7 @@ _requests.Session.request = _no_network
 
 
 def fresh_db():
-    if db.DB_PATH.exists():
-        db.DB_PATH.unlink()
-    db.init_db()
+    helpers.reset_db()
     auth._failures.clear()
 
 
@@ -57,18 +55,23 @@ def fresh_db():
 
 def test_storage():
     section("Users, ownership and cascades")
-    # A database from before accounts: products have no owner column.
-    if db.DB_PATH.exists():
-        db.DB_PATH.unlink()
-    conn = db.get_connection()
-    conn.executescript("""
-        CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
-            target_price REAL, target_currency TEXT, currency TEXT, created_at TEXT NOT NULL);
-        INSERT INTO products (name, created_at) VALUES ('Headphones', '2026-09-01T00:00:00+00:00');
-    """)
-    conn.commit()
-    conn.close()
-    db.init_db()
+    if helpers.on_postgres():
+        # Postgres always starts from the current schema, so there's no upgrade
+        # path to test: an unowned product stands in for one from before accounts.
+        helpers.reset_db()
+        db.add_product("Headphones", None)
+    else:
+        # A database from before accounts: products have no owner column.
+        helpers.empty_db()
+        conn = db.get_connection()
+        conn.executescript("""
+            CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+                target_price REAL, target_currency TEXT, currency TEXT, created_at TEXT NOT NULL);
+            INSERT INTO products (name, created_at) VALUES ('Headphones', '2026-09-01T00:00:00+00:00');
+        """)
+        conn.commit()
+        conn.close()
+        db.init_db()
     db.init_db()
     check("existing product kept, unowned", db.get_product(1)["user_id"], None)
 

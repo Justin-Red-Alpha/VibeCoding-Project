@@ -82,6 +82,11 @@ reason. This is the only path from the archive to the UI.
    running product job stops at its next listing, and a running lookup stops
    before its next capture. An admin often pauses *because* the archive is
    rate-limiting us, so finishing 24 more requests would defeat the point.
+8. **A deadline stop records nothing.** The daily cron run passes `stop` (its
+   deadline, or the archive's cooldown). A lookup it cuts short returns
+   `CUT_SHORT_REASON` and `backfill_source` writes **no** note, so
+   `history_checked_at` stays NULL and the next run looks the listing up again.
+   (A pause, by contrast, is recorded, as rule 7 says.)
 
 ## 7. Atoms owned (FRAMEWORK §4)
 **Trn**

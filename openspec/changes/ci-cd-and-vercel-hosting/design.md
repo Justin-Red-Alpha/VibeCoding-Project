@@ -345,7 +345,10 @@ workflow keeps calling its own copy locally. Both are the same file.
 - **[Vercel rejects the image size]** Chromium plus its libraries make an image
   of about 1 GB. The Function size limits say 500 MB for Python and 5 GB for
   Large Functions (Beta), and container images inherit "Function limits" → an
-  early deploy settles it. If it's rejected, the fallback is shop search via a
+  early deploy settles it. **Measured 2026-09-25** (task 1.2, headless shell
+  only via `playwright install --only-shell`): `docker image ls` shows
+  **1.32 GB** unpacked; the compressed image (`docker save | gzip`) is
+  **~353 MB**. If it's rejected, the fallback is shop search via a
   remote browser (`connect_over_cdp`) behind `browser.chromium`. That would be a
   new decision for the owner.
 - **[Background threads freeze after a response on container Functions]** → The
@@ -392,3 +395,39 @@ workflow keeps calling its own copy locally. Both are the same file.
   in CLAUDE.md).
 - Whether Neon offers Singapore on the Marketplace, and its default Postgres
   major version. Chosen at setup; CI pins 17 to match.
+
+## Implementation notes (2026-09-25, during apply)
+
+Where the build differs from the plan above, and why. None changes a spec
+requirement.
+
+- **Seven suites, not six.** The hosted-mode checks (the port on both engines,
+  the outage page, `/healthz`, cron mode, the daily run, proxy headers, the admin
+  schedule) got their own suite, `tests/test_hosting.py`. CI runs seven steps per
+  job.
+- **The image installs `requirements-dev.txt` too** (httpx only), because
+  `tests/` ships in it and `test_shop_search` uses `TestClient`. Chromium is the
+  headless shell only (`--only-shell`), which is what `headless=True` launches.
+  The image creates an empty, writable `/srv/data` for SQLite mode (local Docker
+  and the CI smoke test); nothing from the local `data/` is copied.
+- **Daily budget, concretely:** no new price check after 150 s
+  (`DAILY_REFRESH_S`), and no new archive request after 230 s
+  (`DAILY_HISTORY_S`). The history sweep also stops while the archive's cooldown
+  is running.
+- **History gained a `stop` hook** (`wayback_lookup`, `backfill_source`,
+  `backfill_product`). A lookup cut short by the deadline returns
+  `CUT_SHORT_REASON` and records **nothing**, so the listing stays unchecked and
+  the next run resumes it (spec: "Interrupted background lookup is resumed").
+  Recording it the way a pause is recorded would have marked it checked for good.
+- **The SQLite adapter is a `sqlite3.Connection` subclass** (`factory=`) that
+  translates `IntegrityError`. The Postgres adapter is a small wrapper. A
+  forgotten `close()` is caught by `__del__`, so it can't starve the pool of 4.
+  A SQLite file that can't be opened also raises `DatabaseUnavailable`.
+- **The test reset closes the pool** after `DROP SCHEMA`: psycopg's auto-prepared
+  statements otherwise keep the dropped `citext` type ("cache lookup failed for
+  type"). The pool is also closed at exit.
+- **The deploy job's health check** uses the repository variable
+  `PRODUCTION_URL` when set, else the deployment's own URL, and says so if
+  deployment protection answers 401/403.
+- **Pinned versions:** actions/checkout@v7, actions/setup-python@v7,
+  actions/setup-node@v7, and `vercel@60.0.1`.

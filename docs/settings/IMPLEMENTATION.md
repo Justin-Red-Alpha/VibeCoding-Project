@@ -32,6 +32,8 @@
 | set history pause | `𝔹 → ()` | `app/site_settings.py:set_history_paused` | built |
 | reschedule live (if changed) | `hours → ()` | `app/scheduler.py:set_refresh_interval` | built |
 | admin form (clean all, then write) | `Form → ()` | `app/admin.py:save_settings` | built |
+| `schedule_fixed` | `() → 𝔹` | `app/admin.py:admin_page` | built |
+| the host's schedule shown instead of the field | `𝔹 → HTML` | `app/templates/admin.html:schedule_fixed` | built |
 | maintenance: refresh all | `() → job` | `app/admin.py:refresh_everything_now` | built |
 | maintenance: FX | `() → 𝔹` | `app/admin.py:refresh_fx` | built |
 | maintenance: pause / resume | `𝔹 → ()` | `app/admin.py:pause_history` | built |
@@ -47,3 +49,5 @@
 | 3. applied live; reschedule only on change | `app/scheduler.py:set_refresh_interval` | `tests/test_auth.py:test_settings_apply_without_restart` |
 | 4. pause honoured at the source | `app/history.py:schedule_backfill` | `tests/test_auth.py:test_settings_apply_without_restart` |
 | 4. pause honoured mid-run | `app/history.py:backfill_product` | `tests/test_history.py:test_admin_pause_stops_running_lookups` |
+| 4. pause honoured by the daily run | `app/scheduler.py:daily_run` | `tests/test_hosting.py:test_cron_endpoint` |
+| 5. fixed schedule: no field; a posted interval is ignored | `app/admin.py:save_settings` | `tests/test_hosting.py:test_admin_schedule_display` |

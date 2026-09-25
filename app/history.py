@@ -121,6 +121,15 @@ def _back_off(seconds: float, detail: str, clock) -> HistoryResult:
 
 PAUSED_REASON = "Archive lookups were paused by an admin, so this lookup stopped early."
 
+# The daily run's time limit, not a result: a lookup stopped for this records
+# nothing, so the listing stays unchecked and the next run looks it up again.
+CUT_SHORT_REASON = "Stopped at the daily run's time limit; the next run looks this listing up."
+
+
+def cooling_down(clock=time.monotonic) -> bool:
+    """The archive told us to slow down, and we're still waiting it out."""
+    return clock() < _cooldown_until
+
 
 def _paused() -> bool:
     from . import site_settings  # site_settings imports nothing from here; lazy anyway
@@ -128,10 +137,12 @@ def _paused() -> bool:
 
 
 def wayback_lookup(source, adapter, get=requests.get, sleep=time.sleep,
-                   clock=time.monotonic, paused=None) -> HistoryResult:
+                   clock=time.monotonic, paused=None, stop=None) -> HistoryResult:
     """Find this listing's archived copies and read a price from each.
-    `paused` (default: the admin's switch) is re-checked before every capture."""
+    `paused` (default: the admin's switch) is re-checked before every capture.
+    `stop` (the daily run's deadline) is checked before every request."""
     paused = paused or _paused
+    stop = stop or (lambda: False)
     if adapter.needs_js:
         return HistoryResult("unsupported", reason=(
             f"Archived copies of {adapter.name} pages don't include the selling price "
@@ -144,6 +155,8 @@ def wayback_lookup(source, adapter, get=requests.get, sleep=time.sleep,
     for index, url in enumerate(urls):
         if index:
             sleep(REQUEST_GAP_S)
+        if stop():
+            return HistoryResult("unavailable", reason=CUT_SHORT_REASON)
         try:
             resp = get(CDX_URL, params={
                 "url": url, "output": "json", "fl": "timestamp,original",
@@ -178,6 +191,8 @@ def wayback_lookup(source, adapter, get=requests.get, sleep=time.sleep,
             # An admin paused lookups mid-run (often *because* the archive is
             # rate-limiting us): stop now rather than finish 24 requests.
             return HistoryResult("unavailable", reason=PAUSED_REASON)
+        if stop():
+            return HistoryResult("unavailable", reason=CUT_SHORT_REASON)
         ref = CAPTURE_URL.format(timestamp=timestamp, original=original)
         try:
             resp = get(ref, headers=BROWSER_HEADERS, timeout=CAPTURE_TIMEOUT_S)
@@ -254,21 +269,26 @@ def _found_note(kept, added, other_currency, implausible) -> str:
     return note
 
 
-def backfill_source(source_id: int, lookups=None) -> HistoryResult | None:
-    """Look up one listing's archived prices and store the usable, new ones."""
+def backfill_source(source_id: int, lookups=None, stop=None) -> HistoryResult | None:
+    """Look up one listing's archived prices and store the usable, new ones.
+    `stop` is passed to each lookup (the daily run's deadline)."""
     source = db.get_source(source_id)
     if source is None:
         return None
     adapter = adapter_for(source["url"])
 
     result = None
+    extra = {"stop": stop} if stop else {}
     for lookup in lookups or HISTORY_SOURCES:
-        attempt = lookup(source, adapter)
+        attempt = lookup(source, adapter, **extra)
         result = result or attempt
         if attempt.kind == "found":
             result = attempt
             break
 
+    if result.reason == CUT_SHORT_REASON:
+        logger.info("History for source %s: cut short; left for the next run", source_id)
+        return result  # nothing recorded: history_checked_at stays empty
     if result.kind != "found":
         db.set_history_note(source_id, result.reason)
         logger.info("History for source %s: %s", source_id, result.kind)
@@ -293,20 +313,26 @@ def backfill_source(source_id: int, lookups=None) -> HistoryResult | None:
     return result
 
 
-def backfill_product(product_id: int, only_unchecked: bool = False) -> None:
+def backfill_product(product_id: int, only_unchecked: bool = False, stop=None) -> None:
     """The product's listings, one after another (never in parallel).
 
     `only_unchecked` skips listings the archive was already asked about, so adding
     a second shop doesn't re-fetch the first one's 24 copies. The user's "Look for
-    archived prices" button passes False and re-checks everything.
+    archived prices" button passes False and re-checks everything. `stop` (the
+    daily run's deadline) ends the sweep without marking anything checked.
     """
     for source in db.get_sources(product_id):
         if _paused():
             return  # paused while this job was queued or running: stop here
+        if stop is not None and stop():
+            return
         if only_unchecked and source["history_checked_at"]:
             continue
         try:
-            backfill_source(source["id"])
+            if stop is None:
+                backfill_source(source["id"])
+            else:
+                backfill_source(source["id"], stop=stop)
         except Exception:  # one listing must never stop the others
             logger.exception("History lookup failed for source %s", source["id"])
 

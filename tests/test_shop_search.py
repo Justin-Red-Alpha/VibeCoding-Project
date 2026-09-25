@@ -11,10 +11,8 @@ import json
 import logging
 import socket
 import sys
-import tempfile
 import time
 import warnings
-from pathlib import Path
 from types import SimpleNamespace
 
 from app import browser
@@ -22,11 +20,10 @@ from app import database as db
 from app.scraper import PriceResult, ScrapeError
 from app.search import site_search
 from app.search.base import Candidate
+from tests import helpers
 
 # The stream reads settings; give it a throwaway database, never data/app.db.
-_tmp = tempfile.TemporaryDirectory()
-_REAL_DB, db.DB_PATH = db.DB_PATH, Path(_tmp.name) / "test.db"
-assert db.DB_PATH != _REAL_DB
+helpers.use_temp_db()
 db.init_db()
 
 FAILURES: list[str] = []

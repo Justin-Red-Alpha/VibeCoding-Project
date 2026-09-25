@@ -1,5 +1,7 @@
 # Price Drop Decision Tracker
 
+[![CI](https://github.com/Justin-Red-Alpha/VibeCoding-Project/actions/workflows/ci.yml/badge.svg)](https://github.com/Justin-Red-Alpha/VibeCoding-Project/actions/workflows/ci.yml)
+
 A local deal-hunting web app. Type a product **name**, and it searches the shops,
 prices up the matches, shows you where it's cheapest — then tracks the ones you
 keep and **automatically decides** whether now is a good time to buy.
@@ -81,9 +83,9 @@ and only fetches pages you add. Don't crank the refresh interval down.
 
 ## 1. Install Python
 
-Python 3.11+ from [python.org/downloads](https://www.python.org/downloads/)
+Python 3.12+ from [python.org/downloads](https://www.python.org/downloads/)
 (tick "Add python.exe to PATH"), then reopen your terminal. Verify with
-`python --version`.
+`python --version`. The project and CI use 3.14.
 
 ## 2. Set up
 
@@ -91,16 +93,14 @@ Python 3.11+ from [python.org/downloads](https://www.python.org/downloads/)
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+python -m playwright install chromium
 ```
 
 If activation is blocked: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
-**Strongly recommended** (required for Lazada, helps any JS-rendered shop):
-
-```powershell
-pip install playwright
-playwright install chromium
-```
+Chromium is what renders JavaScript-only shops (Lazada's real price) and runs
+each shop's own search page. `requirements.txt` also installs the Postgres
+driver, which is only used when `DATABASE_URL` is set (the hosted site).
 
 ## 3. Run
 
@@ -147,6 +147,21 @@ Passwords are stored as salted scrypt hashes, never in plain text. After 5 wrong
 passwords, that username is locked for 15 minutes. There's no password reset
 (there's no email): an admin can delete an account so the person can register
 again.
+
+### Or run it in Docker
+
+The same image the hosted site runs (`Dockerfile.vercel`: Python 3.14, Chromium,
+a non-root user):
+
+```powershell
+docker build -f Dockerfile.vercel -t price-tracker .
+docker run --rm -p 8080:80 price-tracker
+```
+
+Open **http://127.0.0.1:8080**. With no `DATABASE_URL` it keeps its data in a
+SQLite file *inside the container*, which is gone when the container is. Check
+it's up with `curl http://127.0.0.1:8080/healthz`, which answers
+`{"app":"ok","database":"ok"}`.
 
 ## 4. Use it
 
@@ -301,13 +316,31 @@ uvicorn app.main:app --reload
 ## 8. Tests
 
 ```powershell
+pip install -r requirements-dev.txt   # once: httpx, for the route tests
 python -m tests.test_extraction   # extraction, comparison, decisions
 python -m tests.test_search       # matching, URL filtering, throttle detection
 python -m tests.test_currency     # what may be ranked, charted or compared with a target
 python -m tests.test_shop_search  # concurrent shops, block detection, browser start-up
 python -m tests.test_history      # archived prices: matching, filtering, back-off, live-only current price
 python -m tests.test_auth         # accounts, sessions, private products, admin page, CSRF guard
+python -m tests.test_hosting      # both databases, outage page, /healthz, daily cron run, proxy
 ```
+
+GitHub Actions runs all seven on every push and pull request, on Ubuntu and
+Windows, and again against Postgres 17 (see the badge at the top).
+
+**Against Postgres, like CI.** Start a throwaway Postgres in Docker and point
+the tests at it:
+
+```powershell
+docker run -d --name pt-pg -p 5433:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=test postgres:17
+$env:TEST_DATABASE_URL = "postgresql://postgres:postgres@localhost:5433/test"
+python -m tests.test_auth    # ...or any suite
+```
+
+Every suite starts by **dropping the whole schema** of that database, so the
+helper refuses any host but `localhost`/`127.0.0.1`, and refuses the URL in
+`DATABASE_URL`. Never point it at the hosted database.
 
 `test_shop_search` is offline too. Its browser checks run local Chromium against
 in-memory pages, never a shop. `test_history` fakes the archive, so it never
@@ -321,6 +354,58 @@ verdict branch. `test_currency` also checks that unknown-currency prices are nev
 ranked or charted, that target prices are converted before they are compared, and
 that the database upgrade keeps existing products. It uses a throwaway database,
 never `data/app.db`.
+
+## 9. Hosting on Vercel
+
+A personal dev deployment, not a launch. Deploys go through GitHub Actions: a
+push to `main` is deployed only after every test job passes. Vercel's own Git
+auto-deploy is switched off in `vercel.json`, so a failing test always blocks a
+deploy.
+
+> **Right now (2026-09-25) we're trying Vercel's Git auto-deploy instead.**
+> `vercel.json` isn't committed yet. Until it is:
+> - every push deploys whether or not the tests pass;
+> - there's no daily cron;
+> - the region is Vercel's default.
+>
+> Leave `SCHEDULER_MODE` unset meanwhile, and skip `VERCEL_TOKEN`.
+
+**One-time setup (the owner, in the Vercel and GitHub dashboards):**
+
+1. In the Vercel project, turn on **Container Images** (it builds
+   `Dockerfile.vercel`). `vercel.json` pins the region to `sin1` (Singapore).
+2. Install **Neon** from the Vercel Marketplace (Singapore if offered, Postgres
+   17, preview branching off). It adds `DATABASE_URL` to the project by itself.
+3. Add the Vercel environment variables below, for **Production**.
+4. Add the GitHub repository secrets below (Settings → Secrets and variables →
+   Actions).
+5. Push to `main`. When CI is green, the deploy job ships it. **Register on the
+   hosted site straight away**: the first account there becomes its admin.
+
+| Where | Name | Value |
+|---|---|---|
+| Vercel env | `DATABASE_URL` | added by Neon; don't type it |
+| Vercel env | `SCHEDULER_MODE` | `cron` |
+| Vercel env | `CRON_SECRET` | a long random string you generate (mark it Sensitive). Vercel's cron sends it as `Authorization: Bearer …` |
+| GitHub secret | `VERCEL_TOKEN` | vercel.com → Account Settings → Tokens |
+| GitHub secret | `VERCEL_ORG_ID` | your Vercel ID (personal) or Team ID |
+| GitHub secret | `VERCEL_PROJECT_ID` | the project's Settings → General → Project ID |
+| GitHub variable (optional) | `PRODUCTION_URL` | e.g. `https://<project>.vercel.app`, for the post-deploy health check |
+
+Values are never written down in the repo. Until `VERCEL_TOKEN` exists, the
+deploy job is **skipped with a notice**, and CI stays green.
+
+**On Vercel Hobby, prices refresh once a day** (02:00 Singapore time), not every
+6 hours: Hobby runs cron jobs at most daily. The Admin page shows "once a day,
+set by the host" instead of the interval. Each daily run re-checks the listings
+checked longest ago first, then finishes any archive lookups left undone, and
+stops in time for Vercel's 300-second limit. Whatever it doesn't reach goes
+first the next day. "Refresh my prices" and the admin's refresh button still
+work any time.
+
+To roll back, promote the previous deployment in the Vercel dashboard. The data
+stays in Neon either way. Local use is unaffected: with no `DATABASE_URL`, the
+app uses `data/app.db` and its own 6-hour timer.
 
 ## Adding a shop
 
@@ -338,17 +423,21 @@ app/
   scraper.py      Price extraction strategies + multi-currency parsing
   analysis.py     Comparison, best-price series, buy/wait decision
   fx.py           Currency conversion + cached exchange rates
-  database.py     SQLite (products / sources / snapshots / settings / fx) + migration
-  refresh.py      Fetch + store
-  scheduler.py    Background interval job
+  database.py     The storage port: SQLite file or Postgres (DATABASE_URL), schema + migration
+  refresh.py      Fetch + store; stalest-first daily refresh
+  scheduler.py    Background interval job, or the host's daily run (SCHEDULER_MODE=cron)
   search/
     providers.py  Product discovery + throttle handling + caching
     matching.py   Scoring a listing against what you asked for
     base.py       Candidate type
   templates/      Jinja2 HTML
   static/         CSS
-tests/            Fixture-based tests
+tests/            Fixture-based tests (helpers.py picks SQLite or TEST_DATABASE_URL)
 data/app.db       SQLite (created on first run)
+Dockerfile.vercel The one image: CI smoke-tests it, Vercel runs it
+vercel.json       Region, daily cron, Git auto-deploy off
+.github/workflows/ci.yml   Tests on Ubuntu, Windows and Postgres; container smoke test; gated deploy
+scripts/drift-check.sh     Docs ↔ code check (vendored from the supercharge skill)
 ```
 
 ## Known limits

@@ -1,0 +1,39 @@
+# One image for CI and for hosting. Vercel (Container Images) builds this file
+# from the repo; CI builds it with `docker build -f Dockerfile.vercel .` and
+# smoke-tests it, so what's tested is what's hosted.
+# Why it looks like this: openspec/changes/ci-cd-and-vercel-hosting/design.md, D2.
+FROM python:3.14-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONIOENCODING=utf-8 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+WORKDIR /srv
+
+# Dependencies first, so code changes don't reinstall them. Chromium's headless
+# shell is all `browser.chromium()` launches (headless=True); --with-deps pulls
+# its system libraries, which needs root, so it runs before USER.
+# requirements-dev.txt (httpx) is here because tests/ ships in the image: CI
+# runs tests.test_shop_search inside it to prove Chromium starts.
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install -r requirements.txt -r requirements-dev.txt \
+ && python -m playwright install --with-deps --only-shell chromium \
+ && rm -rf /var/lib/apt/lists/*
+
+# Non-root. data/ is only used without DATABASE_URL (local Docker, CI smoke):
+# the hosted site keeps everything in Postgres, since the disk doesn't survive.
+RUN useradd --create-home --uid 1000 app \
+ && mkdir -p /srv/data \
+ && chown app:app /srv/data
+COPY app/ app/
+COPY tests/ tests/
+USER app
+
+# Vercel's proxy is the only way in, so trust its forwarded headers: the scheme
+# (https -> Secure cookie) and the client address. No --reload here, so the
+# Windows reload traps in CLAUDE.md don't apply.
+EXPOSE 80
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port \"${PORT:-80}\" --proxy-headers --forwarded-allow-ips '*'"]

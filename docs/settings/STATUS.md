@@ -14,6 +14,7 @@ module constant is now an admin setting, and applies without a restart.
 | pause / resume archive lookups | ✅ built | the "data on hold" switch |
 | refresh-all and FX maintenance actions | ✅ built | refresh-all runs the scheduled job early; FX reports a failed fetch |
 | saves write only changes; invalid form writes nothing; bad env values listed | ✅ built | after the 2026-09-24 code review |
+| host-fixed schedule (`SCHEDULER_MODE=cron`) shown, interval ignored | ✅ built | 2026-09-25, `tests/test_hosting.py:test_admin_schedule_display` |
 
 ## Needs work
 None.

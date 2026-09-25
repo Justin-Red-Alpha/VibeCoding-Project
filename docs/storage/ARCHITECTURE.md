@@ -5,8 +5,12 @@
 
 ## 1. Overview
 The durable store: products, the shop listings (sources) tracking each one, the
-price history of every fetch attempt, user settings, and the FX rate cache. It is
-plain `sqlite3` with no ORM, one connection per call, in `data/app.db`.
+price history of every fetch attempt, user settings, and the FX rate cache. Plain
+SQL with no ORM, behind **one port with two adapters** (FRAMEWORK §7.4):
+`get_connection()` returns a SQLite connection to `data/app.db` (the default,
+opened per call) or, when `DATABASE_URL` is set, a pooled Postgres connection
+(the hosted site, on Neon). Every other module calls `db.*` and never names a
+driver.
 
 ## 2. Why
 Modelling it as a category makes two things explicit that a schema can't. A
@@ -14,6 +18,12 @@ Modelling it as a category makes two things explicit that a schema can't. A
 than a missing row. And `Product.currency` is a **stored copy of a deduced
 morphism**, which needs a stated consistency mechanism (§5 "deduce, don't
 store").
+
+The hosted engine adds one more reason. Moving to Postgres adds **no new data
+object**: the rows, tables and schema are the same `Dat` materialised at a
+second `Loc` (`SQLite ⊕ NeonPostgres`, §3). What's new is one config object
+(`Backend`) and a few morphisms (`connect`, `write_transaction`, `translate`)
+that realise the same contract on both engines.
 
 ## 3. Core category
 ```mermaid
@@ -77,6 +87,13 @@ graph LR
 | `display_currency?` | `Setting → Currency` | Partial | the "Show prices in" choice. Absent = as quoted |
 | `rate` | `FxRate → ℝ` | Total | units of `quote` per 1 `base` (base is always USD) |
 | `fx_fetched_at` | `FxRate → Date` | Total | age of the cached rate |
+| `Backend` | `sqlite(DB_PATH) ⊕ postgres(DATABASE_URL)` | Total | chosen by configuration: `DATABASE_URL` set → Postgres |
+| `connect` | `Backend → Conn` | Partial (network) | the port. Failure raises `DatabaseUnavailable` |
+| `Row` | `name ⊕ index → value`, `keys`, `dict` | Total | a row reads the same on both engines (`sqlite3.Row`, or `database.Row` on Postgres) |
+| `schema` | `Dialect → SQL` | Total | one schema text with two tokens, `{pk}` and `{username}` |
+| `write_transaction` | `Conn → ctx` ⊸ | Partial (blocks) | the one exclusive-write primitive for check-then-write rules |
+| `translate` | `DriverError → IntegrityError ⊕ DatabaseUnavailable` | Total | the app's own error types. Unknown errors pass through unchanged |
+| `ping` | `() → ()` | Partial | `SELECT 1` through the port, for `/healthz` |
 
 ## 5. Functors
 **Schema migration** is a functor from the v1 category (url and selector stored on
@@ -104,6 +121,33 @@ source. It's identity on history, so no price is lost. Additive columns
    them. `fetched_at` means *observed at*: the capture time for archived rows.
    Note: `PriceSnapshot` now has **two writers**, `refresh` (live, success ⊕
    failure) and `history` (archived, success only). Rule 1 holds for both.
+7. **One port.** Nothing reaches a database except through `get_connection`, and
+   no module but `database` imports a driver. Callers see `Row`, `IntegrityError`
+   and `DatabaseUnavailable`, never `sqlite3.*` or `psycopg.*`.
+8. **One dialect for queries.** SQL is written once with `?` placeholders (the
+   Postgres adapter rewrites them to `%s`). Money is `DOUBLE PRECISION`, never
+   `REAL`: Postgres `REAL` keeps about 7 digits and would round IDR 1,234,567.89.
+   New ids come from `INSERT … RETURNING id` on both engines. Every list query
+   ends its `ORDER BY` with `id`, because Postgres doesn't break ties by insertion
+   order. `NULLS FIRST` is written out because the engines disagree on the
+   default.
+9. **`write_transaction` is lock-first.** SQLite: `BEGIN IMMEDIATE`. Postgres:
+   `pg_advisory_xact_lock(USER_GUARD_LOCK)` as the transaction's **first**
+   statement, under READ COMMITTED (pinned per connection). Then the count after
+   the wait sees the other caller's commit. Under REPEATABLE READ the snapshot
+   would predate the wait and the race would reopen. Transaction-scoped locks
+   work through Neon's transaction-mode pooler.
+10. **A failed statement rolls back before anything else writes**, on both
+    engines: `with conn:` and `write_transaction` roll back, and a Postgres
+    connection goes back to the pool reset. A connection a caller forgot to close
+    is returned when it's garbage-collected, so it can't starve the pool of 4.
+11. **An outage is never empty data** (invariant 3, extended). An unreachable
+    database raises `DatabaseUnavailable`, which web answers with a 503 page.
+    Driver errors are logged without the connection string.
+12. **Schema creation on Postgres** runs in one transaction after
+    `pg_advisory_xact_lock(SCHEMA_LOCK)`, so concurrent cold starts don't collide
+    on `CREATE TABLE IF NOT EXISTS`. A Postgres database always starts from the
+    current schema, so rules 4 and 5 (the upgrade path) are SQLite-only.
 
 ## 7. Atoms owned (FRAMEWORK §4)
 **Trn**
@@ -116,12 +160,21 @@ source. It's identity on history, so no price is lost. Additive columns
 | `get_setting` / `set_setting` | `key ⇄ value` | `database.get_setting` / `set_setting` |
 | `save_fx_rates` / `get_fx_rates` | `FxRate* ⇄ table` | `database.save_fx_rates` / `get_fx_rates` |
 
-**Loc**: `SQLite` (the file `data/app.db` on disk). Every caller's thread in
-`ServerProc` opens its own connection.
-**Trm**: `t_sql : ServerProc ⇄ SQLite`, carrying rows.
+**Trn** (the port, added 2026-09-25): `get_connection` (`connect`),
+`write_transaction`, `ping`, `schema`, `_translate`, and the two adapters
+`_SqliteConn` and `_PgConn` (parallel realisations of one `Conn` contract, §4.4).
+**Loc**: `SQLite` (the file `data/app.db` on disk). When hosted, the same rows
+live at delivery's `NeonPostgres`, reached through `NeonPooler` (PgBouncer,
+transaction mode; both owned by delivery §7). SQLite: every caller's thread
+opens its own connection. Postgres: one pool of ≤ 4 connections per process,
+shared by threads, checked on checkout.
+**Trm**: `t_sql : ServerProc ⇄ SQLite`, carrying rows; `t_pg : ServerProc ⇄
+NeonPooler ⇄ NeonPostgres`, carrying rows over TLS. `t_pg` is defined in
+delivery, which owns the hosted sites.
 **Placements (§4.2)**: storage `Trn`s run on every thread that calls them: request
 workers, the price-lookup pool (reads only), the scheduler thread, and the test
-process. A connection per call is what makes that relation safe.
+process. A connection per call (SQLite) or per checkout (Postgres) is what makes
+that relation safe.
 
 ## 8. Bridges to other components (ports)
 | Boundary morphism | Signature | Stored? | Semantics |
@@ -137,3 +190,8 @@ process. A connection per call is what makes that relation safe.
   process RAM before any `Trn` uses it.
 - **Law 6 (runsAt is a relation).** Storage runs on many threads by design, and
   there's no process-wide connection to share.
+- **Law 4 (dependency mediation).** Nothing reaches either engine except through
+  `get_connection`, and the race guards reach locking only through
+  `write_transaction`. The port has no `Loc` of its own (§7.4). Which adapter is
+  glued in is decided by configuration, and the same seven suites run against
+  both in CI.

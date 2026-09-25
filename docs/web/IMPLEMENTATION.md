@@ -36,7 +36,12 @@
 | archived row marker + link | `PriceSnapshot → HTML` | `app/templates/product.html:origin_ref` | built |
 | route: refresh my prices | `POST /refresh` (own products; queued in the background, one job per user) | `app/main.py:refresh_mine` | built |
 | "refreshing" notice | `?refreshing=1 → HTML` | `app/main.py:dashboard` | built |
-| startup | FX + scheduler | `app/main.py:lifespan` | built |
+| startup | FX + scheduler (shutdown also closes the Postgres pool) | `app/main.py:lifespan` | built |
+| outage → 503 page | `DatabaseUnavailable → Response` | `app/main.py:_database_unavailable` | built |
+| outage page (no user lookup) | standalone template | `app/main.py:_bare_templates` | built |
+| route: health check | `GET /healthz` | `app/main.py:healthz` | built |
+| route: the host's daily run | `GET /cron/daily` | `app/main.py:cron_daily` | built |
+| public host behind the proxy | `Request → Host` | `app/main.py:SameSitePostGuard` | built |
 | JS: render a row | `row → <tr>` | `app/templates/discover.html:makeRow` | built |
 | JS: paint a price | `row → cell` | `app/templates/discover.html:paintPrice` | built |
 | JS: terminal states | `sections → terminal` | `app/templates/discover.html:stopPending` | built |
@@ -59,6 +64,10 @@
 | tracking schedules an archive lookup | `app/main.py:lookup_history` | `tests/test_history.py:test_routes_schedule_lookups` |
 | provenance shown on the page | `app/templates/product.html:history_by_source` | `tests/test_history.py:test_product_page_shows_provenance` |
 | "As quoted" overrides the site default | `app/templating.py:display_currency_for` | `tests/test_auth.py:test_review_as_quoted_beats_site_default` |
+| 9. outage is a 503, never empty | `app/main.py:_database_unavailable` | `tests/test_hosting.py:test_outage_is_not_empty_data` |
+| 10. health check reveals nothing | `app/main.py:healthz` | `tests/test_hosting.py:test_healthz` |
+| 11. cron: secret or nothing | `app/main.py:cron_daily` | `tests/test_hosting.py:test_cron_endpoint` |
+| guard uses the forwarded host | `app/main.py:SameSitePostGuard` | `tests/test_hosting.py:test_forwarded_host` |
 
 ## Notes / divergences
 - Rule 2 (the JS is a dumb renderer) is a convention with no automated check.

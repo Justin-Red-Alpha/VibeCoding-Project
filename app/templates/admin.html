@@ -67,12 +67,18 @@
             {% endfor %}
         </fieldset>
         {% for key, label in labels.items() %}
+            {% if key == 'refresh_interval_hours' and schedule_fixed %}
+                <p class="schedule-fixed"><strong>Automatic refresh:</strong> once a day, set by the host.
+                    <span class="hint">The hosting plan runs scheduled work daily, so there's no interval to choose here.
+                        "Refresh every user's prices now" below still works.</span></p>
+            {% else %}
             <label>{{ label }}
                 <input type="number" name="{{ key }}" value="{{ numbers[key] }}"
                        step="{{ 'any' if key == 'refresh_interval_hours' else '1' }}" required>
             </label>
+            {% endif %}
         {% endfor %}
-        <p class="hint">Refresh interval 1–168 hours · listings per shop 1–20 · price lookups per search 0–20.
+        <p class="hint">{% if not schedule_fixed %}Refresh interval 1–168 hours · {% endif %}listings per shop 1–20 · price lookups per search 0–20.
             Changes apply from the next search or refresh; no restart needed. A field you leave as it is
             keeps following its environment variable or default.</p>
         {% for problem in ignored_env %}

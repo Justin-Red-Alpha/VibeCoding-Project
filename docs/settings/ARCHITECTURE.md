@@ -55,6 +55,7 @@ graph LR
 | `effective` | `SettingKey → value` | Deduced | the first *valid* of db, env, default. Read at use time |
 | `ignored_env` | `() → 𝕊*` | Total | env values that are set but invalid: logged once and listed on the admin page, never dropped silently |
 | shops searched | `() → Domain*` | Deduced | `available_shops − search_domains_off`. The **off**-list is stored, so a shop added to `ADAPTERS` later is searched without an admin |
+| `schedule_fixed` | `SchedulerMode → 𝔹` | Deduced | `mode = cron`: the host runs refreshes once a day, so the interval isn't a setting |
 
 ## 6. Composition rules
 1. **Range-checked:** refresh 1–168 h; per-shop 1–20; price lookups 0–20. The
@@ -69,7 +70,12 @@ graph LR
    only when it changed (a reschedule restarts the countdown).
 4. **Pause is honoured at the source and mid-run:** `history.schedule_backfill`
    schedules nothing while paused; a queued or running `backfill_product` stops at
-   the next listing; `wayback_lookup` stops before its next capture.
+   the next listing; `wayback_lookup` stops before its next capture. The daily
+   cron run checks it too, and then skips archive lookups entirely.
+5. **Never promise a schedule the site can't keep.** When `schedule_fixed`, the
+   page shows "once a day, set by the host" instead of the interval field, and
+   `save_settings` neither cleans nor stores a posted interval, while the other
+   fields save normally. "Refresh every user's prices now" still works.
 
 ## 7. Atoms owned (FRAMEWORK §4)
 **Trn**: the typed getters and validated setters in `site_settings`, and

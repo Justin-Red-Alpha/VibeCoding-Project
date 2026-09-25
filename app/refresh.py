@@ -3,7 +3,6 @@ source, one product's sources, or everything, and store each result (success or
 failure) as a snapshot."""
 
 import logging
-import sqlite3
 import threading
 import time
 
@@ -27,7 +26,7 @@ def _record(source_id: int, **snapshot) -> bool:
     try:
         db.add_snapshot(source_id, **snapshot)
         return True
-    except sqlite3.IntegrityError:
+    except db.IntegrityError:
         logger.info("Source %s was deleted during its refresh; result dropped", source_id)
         return False
 
@@ -56,14 +55,37 @@ def refresh_source(source_id: int) -> None:
         )
 
 
-def _refresh_sources_politely(source_ids: list[int]) -> None:
+def _refresh_sources_politely(source_ids: list[int], deadline: float | None = None,
+                              clock=time.monotonic) -> int:
+    """Check each listing in turn. With a deadline, no new check starts once it has
+    passed. Returns how many were checked."""
+    checked = 0
     for index, source_id in enumerate(source_ids):
         if index:
             time.sleep(DELAY_BETWEEN_REQUESTS)
+        if deadline is not None and clock() >= deadline:
+            break
         try:
             refresh_source(source_id)
         except Exception:  # belt and braces: one listing must never stop the rest
             logger.exception("Refresh of source %s failed; continuing", source_id)
+        checked += 1
+    return checked
+
+
+def stalest_first() -> list[int]:
+    """Every listing's id, least recently checked first (db.get_sources_stalest_first)."""
+    return [row["id"] for row in db.get_sources_stalest_first()]
+
+
+def refresh_stalest(deadline: float, clock=time.monotonic) -> dict:
+    """The daily run's refresh: stalest listings first, starting no new check after
+    `deadline`. Nothing is queued: a listing it didn't reach is simply still the
+    stalest, so the next run starts with it."""
+    with _batch_lock:
+        source_ids = stalest_first()
+        checked = _refresh_sources_politely(source_ids, deadline=deadline, clock=clock)
+    return {"refreshed": checked, "refresh_left": len(source_ids) - checked}
 
 
 def refresh_product(product_id: int) -> None:

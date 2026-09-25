@@ -6,7 +6,12 @@ beautifulsoup4==4.12.3
 apscheduler==3.10.4
 python-multipart==0.0.9
 
-# Optional but strongly recommended: renders JavaScript-only shops.
+# Renders JavaScript-only shops and runs the per-shop site search.
 # Lazada will NOT work without it (its server HTML only carries the list price).
-#   pip install playwright && playwright install chromium
-# playwright==1.47.0
+# After installing: python -m playwright install chromium
+playwright==1.63.0
+
+# Postgres, used only when DATABASE_URL is set (the hosted site). Local runs use
+# the SQLite file and never import these. The binary extra bundles libpq.
+psycopg[binary]==3.3.6
+psycopg-pool==3.3.3

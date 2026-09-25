@@ -55,6 +55,9 @@ def admin_page(request: Request, notice: str = "", admin=Depends(auth.require_ad
         "labels": site_settings.LABELS,
         "ignored_env": site_settings.ignored_env(),
         "history_paused": site_settings.history_paused(),
+        # The host runs refreshes once a day (SCHEDULER_MODE=cron): show that,
+        # never an interval the site can't keep.
+        "schedule_fixed": scheduler.mode() == "cron",
         "fx_age": fx.rates_age_hours(),
     })
     response.delete_cookie("admin_error", path="/admin")
@@ -108,13 +111,17 @@ async def save_settings(request: Request, admin=Depends(auth.require_admin)):
     Every field is validated before anything is written, so one bad value changes
     nothing. Then only values that differ from what's in effect are stored, so an
     untouched field keeps following its environment variable or default.
+
+    When the host schedules refreshes, the interval isn't a setting at all: a
+    posted one is neither checked nor stored.
     """
     form = await request.form()
+    keys = [key for key in site_settings.LABELS
+            if not (key == "refresh_interval_hours" and scheduler.mode() == "cron")]
     try:
         currency = site_settings.clean_currency(form.get("default_currency", ""))
         domains = site_settings.clean_search_domains(form.getlist("search_domains"))
-        numbers = {key: site_settings.clean_number(key, form.get(key, ""))
-                   for key in site_settings.LABELS}
+        numbers = {key: site_settings.clean_number(key, form.get(key, "")) for key in keys}
     except ValueError as exc:
         return _back(error=str(exc))
 

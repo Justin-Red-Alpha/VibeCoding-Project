@@ -9,8 +9,6 @@ Run: python -m tests.test_history
 import json
 import logging
 import sys
-import tempfile
-from pathlib import Path
 
 import requests
 
@@ -18,6 +16,7 @@ from app import database as db
 from app import history
 from app.adapters import adapter_for
 from app.scraper import extract_from_html
+from tests import helpers
 
 FAILURES: list[str] = []
 
@@ -41,15 +40,8 @@ def section(title):
 
 # --- a throwaway database ----------------------------------------------------
 
-_tmp = tempfile.TemporaryDirectory()
-_REAL_DB, db.DB_PATH = db.DB_PATH, Path(_tmp.name) / "test.db"
-assert db.DB_PATH != _REAL_DB, "tests must never touch data/app.db"
-
-
-def fresh_db():
-    if db.DB_PATH.exists():
-        db.DB_PATH.unlink()
-    db.init_db()
+helpers.use_temp_db()
+fresh_db = helpers.reset_db
 
 
 # --- fixtures ----------------------------------------------------------------
@@ -69,29 +61,37 @@ LAZADA_ARCHIVED = ('<html><body><script>var pageData = {"pdt_price":"$589.00",'
 
 def test_storage():
     section("Archived observations are snapshots with provenance")
-    # An older database: no provenance or history columns yet.
-    if db.DB_PATH.exists():
-        db.DB_PATH.unlink()
-    conn = db.get_connection()
-    conn.executescript("""
-        CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
-            target_price REAL, currency TEXT, created_at TEXT NOT NULL);
-        CREATE TABLE sources (id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-            retailer TEXT NOT NULL, url TEXT NOT NULL, price_selector TEXT, created_at TEXT NOT NULL);
-        CREATE TABLE price_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-            price REAL, currency TEXT, strategy TEXT, fetched_at TEXT NOT NULL, error TEXT);
-        INSERT INTO products (name, created_at) VALUES ('Headphones', '2026-09-01T00:00:00+00:00');
-        INSERT INTO sources (product_id, retailer, url, created_at)
-            VALUES (1, 'Amazon', 'https://www.amazon.com/dp/B09XS7JWHH', '2026-09-01T00:00:00+00:00');
-        INSERT INTO price_snapshots (source_id, price, currency, strategy, fetched_at)
-            VALUES (1, 300.0, 'USD', 'amazon-css', '2026-09-01T00:00:00+00:00');
-    """)
-    conn.commit()
-    conn.close()
-    db.init_db()
-    db.init_db()  # idempotent
+    if helpers.on_postgres():
+        # Postgres always starts from the current schema, so there's no upgrade
+        # path: build the same product, listing and live snapshot through the API.
+        helpers.reset_db()
+        pid = db.add_product("Headphones", None)
+        sid = db.add_source(pid, "https://www.amazon.com/dp/B09XS7JWHH", None, retailer="Amazon")
+        db.add_snapshot(sid, 300.0, "USD", "amazon-css", fetched_at="2026-09-01T00:00:00+00:00")
+        db.init_db()  # idempotent
+    else:
+        # An older database: no provenance or history columns yet.
+        helpers.empty_db()
+        conn = db.get_connection()
+        conn.executescript("""
+            CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+                target_price REAL, currency TEXT, created_at TEXT NOT NULL);
+            CREATE TABLE sources (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                retailer TEXT NOT NULL, url TEXT NOT NULL, price_selector TEXT, created_at TEXT NOT NULL);
+            CREATE TABLE price_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+                price REAL, currency TEXT, strategy TEXT, fetched_at TEXT NOT NULL, error TEXT);
+            INSERT INTO products (name, created_at) VALUES ('Headphones', '2026-09-01T00:00:00+00:00');
+            INSERT INTO sources (product_id, retailer, url, created_at)
+                VALUES (1, 'Amazon', 'https://www.amazon.com/dp/B09XS7JWHH', '2026-09-01T00:00:00+00:00');
+            INSERT INTO price_snapshots (source_id, price, currency, strategy, fetched_at)
+                VALUES (1, 300.0, 'USD', 'amazon-css', '2026-09-01T00:00:00+00:00');
+        """)
+        conn.commit()
+        conn.close()
+        db.init_db()
+        db.init_db()  # idempotent
 
     old = db.get_snapshots(1)[0]
     check("old row kept", (old["price"], old["currency"]), (300.0, "USD"))

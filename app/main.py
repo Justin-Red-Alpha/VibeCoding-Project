@@ -1,5 +1,7 @@
+import hmac
 import json
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,8 +9,9 @@ from pathlib import Path
 from urllib.parse import quote, urlparse
 
 from fastapi import Depends, FastAPI, Form, Request, HTTPException
-from fastapi.responses import PlainTextResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from starlette.status import HTTP_303_SEE_OTHER
 
 from . import auth
@@ -55,6 +58,7 @@ async def lifespan(app: FastAPI):
     start_scheduler()
     yield
     stop_scheduler()
+    db.close_pool()
 
 
 class SameSitePostGuard:
@@ -64,6 +68,11 @@ class SameSitePostGuard:
     sends Origin (or at least Referer) on a cross-site form post, so if either names
     a different host, it's refused. Requests with neither (curl, tests) pass.
     Pure ASGI rather than @app.middleware, so the SSE stream is never buffered.
+
+    Behind the host's proxy the public name arrives in X-Forwarded-Host, and `host`
+    may be an internal one, so the forwarded name wins when present. A forged
+    header doesn't weaken this: the guard defends a browser's cross-site post,
+    and a browser can't set that header on a form post.
     """
 
     UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
@@ -78,7 +87,8 @@ class SameSitePostGuard:
             source = headers.get("origin") or headers.get("referer")
             if source is not None:
                 host = urlparse(source).netloc if source != "null" else "null"
-                if host != headers.get("host", ""):
+                public = (headers.get("x-forwarded-host") or "").split(",")[0].strip()
+                if host != (public or headers.get("host", "")):
                     response = PlainTextResponse(
                         "Refused: this form was submitted from another website.", status_code=403)
                     await response(scope, receive, send)
@@ -97,6 +107,45 @@ app.include_router(admin_router)
 def _to_login(request: Request, exc: auth.LoginRequired):
     return RedirectResponse(url=f"/login?next={quote(auth.local_path(exc.next_path))}",
                             status_code=HTTP_303_SEE_OTHER)
+
+
+# No context processor: the shared one reads the signed-in user from the database.
+_bare_templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+@app.exception_handler(db.DatabaseUnavailable)
+def _database_unavailable(request: Request, exc: db.DatabaseUnavailable):
+    """An outage is never shown as empty data: no "Nothing tracked yet" when the
+    products simply couldn't be read (invariant 3, extended to the database)."""
+    return _bare_templates.TemplateResponse(request, "unavailable.html", status_code=503,
+                                            headers={"Retry-After": "30"})
+
+
+@app.get("/cron/daily")
+def cron_daily(request: Request):
+    """The host's once-a-day call (vercel.json `crons`). Vercel sends
+    `Authorization: Bearer $CRON_SECRET`. With no secret configured this route
+    doesn't exist; with a wrong one it does nothing."""
+    secret = os.environ.get("CRON_SECRET") or ""
+    if not secret:
+        raise HTTPException(status_code=404)
+    supplied = request.headers.get("authorization", "").encode("utf-8")
+    if not hmac.compare_digest(supplied, f"Bearer {secret}".encode("utf-8")):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return JSONResponse(scheduler.daily_run())
+
+
+@app.get("/healthz")
+def healthz():
+    """Is the app up, and does its database answer? Never names the backend,
+    the host or the connection string."""
+    try:
+        db.ping()
+        database = "ok"
+    except Exception:
+        database = "unreachable"
+    return JSONResponse({"app": "ok", "database": database},
+                        status_code=200 if database == "ok" else 503)
 
 
 def _latest_per_source(snapshots) -> dict:

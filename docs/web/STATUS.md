@@ -14,6 +14,7 @@ SSE event types aren't declared in one place.
 | target currency picker + validation | ✅ built | 2026-09-24 |
 | concurrent missing-price lookups | ✅ built | 2026-09-24 |
 | no-stuck-spinner page states | ✅ built | 2026-09-24 |
+| outage page, `/healthz`, `/cron/daily`, forwarded-host guard | ✅ built | 2026-09-25, `tests/test_hosting.py`. Vercel's real headers are confirmed at the first deploy |
 | edit target after creation | ⬜ unbuilt | there's no edit form |
 | single `SseEvent` declaration | ⬜ unbuilt | advisory under Law 2 |
 

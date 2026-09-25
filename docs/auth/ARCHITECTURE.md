@@ -55,10 +55,11 @@ graph LR
 
 ## 6. Composition rules
 1. **The first account is the admin,** and it claims every unowned product.
-   It's atomic (`BEGIN IMMEDIATE`), so two first sign-ups can't both win.
+   It's atomic (`db.write_transaction`: `BEGIN IMMEDIATE` on SQLite, a
+   lock-first advisory lock on Postgres), so two first sign-ups can't both win.
 2. **At least one enabled admin always exists.** Demote, disable and delete are
    refused when they'd remove the last one. The count and the change happen in
-   one `BEGIN IMMEDIATE` transaction (`db.guarded_user_change`), so two admins
+   one `write_transaction` (`db.guarded_user_change`), so two admins
    demoting each other at once can't both succeed. Every route inherits it via
    `auth`.
 3. **Passwords are never stored.** Only salted scrypt with its parameters is
@@ -90,8 +91,11 @@ graph LR
 **Loc**: `ServerProc` (request threads) and `SQLite` (`users`, `sessions`).
 `UserBrowser` holds the cookie.
 **Trm**: `t_cookie : UserBrowser → ServerProc`, carrying the raw session token on
-every request (HttpOnly, SameSite=Lax). The cross-site POST guard sits on this
-channel: a request whose Origin or Referer names another host is refused.
+every request (HttpOnly, SameSite=Lax, and `Secure` whenever the scheme is
+https, which behind Vercel's proxy comes from uvicorn's `--proxy-headers`). The
+cross-site POST guard sits on this channel: a request whose Origin or Referer
+names another host is refused. Behind the proxy "the host" is
+`x-forwarded-host`, because `host` may be an internal name.
 **Placements (§4.2)**: the session exists in **two `DataLoc`s in deliberately
 different forms**: raw in the browser, `sha256` in SQLite. The username rules are
 placed twice: the HTML `pattern` in the browser, and `username_problem` on the
@@ -109,5 +113,8 @@ server, which is the authority.
 - **Law 1:** authorization runs on the request thread after the session and user
   rows are delivered over `t_sql`. The browser never decides anything.
 - **Law 2:** `t_cookie` is typed (an opaque token) and crosses a real boundary.
-- **CSRF stance (localhost):** SameSite=Lax plus the Origin/Referer guard. There
-  are no per-form tokens. Revisit before exposing the app beyond localhost.
+- **CSRF stance (localhost and the personal dev deployment):** SameSite=Lax plus
+  the Origin/Referer guard. There are no per-form tokens. A forged
+  `x-forwarded-host` doesn't weaken the guard: it defends a browser's cross-site
+  post, and a browser can't set that header on a form. Revisit before a real
+  launch (none is planned).

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Temporarily unavailable — Price Drop Decision Tracker</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    {# Standalone on purpose: base.html reads the signed-in user from the
+       database, which is exactly what just failed. #}
+    <header class="topbar">
+        <a class="brand" href="/">📉 Price Drop Decision Tracker</a>
+    </header>
+    <main>
+        <section class="card">
+            <h1>Temporarily unavailable</h1>
+            <p class="notice notice-error" role="alert">We couldn't load your data: the database isn't answering right now.</p>
+            <p class="hint">Please try again in a minute.</p>
+            <p><a class="btn btn-primary" href="{{ request.url.path }}">Try again</a></p>
+        </section>
+    </main>
+</body>
+</html>

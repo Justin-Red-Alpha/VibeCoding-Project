@@ -11,12 +11,11 @@ Run: python -m tests.test_currency
 import logging
 import re
 import sys
-import tempfile
-from pathlib import Path
 
 from app import database as db
 from app import main
 from app.analysis import best_price_series, compare_sources, target_in
+from tests import helpers
 
 FAILURES: list[str] = []
 
@@ -78,16 +77,8 @@ def _by_retailer(comparison, retailer):
 
 # --- a throwaway database ------------------------------------------------
 
-REAL_DB = db.DB_PATH
-_tmp = tempfile.TemporaryDirectory()
-db.DB_PATH = Path(_tmp.name) / "test.db"
-assert db.DB_PATH != REAL_DB, "tests must never touch data/app.db"
-
-
-def fresh_db():
-    if db.DB_PATH.exists():
-        db.DB_PATH.unlink()
-    db.init_db()
+helpers.use_temp_db()
+fresh_db = helpers.reset_db
 
 
 # --- ranking across currencies ---------------------------------------------
@@ -206,8 +197,7 @@ def test_series_excludes_uncomparable():
 
 def _raw(sql_script):
     """Build a database by hand, the way an older version of the app left it."""
-    if db.DB_PATH.exists():
-        db.DB_PATH.unlink()
+    helpers.empty_db()
     conn = db.get_connection()
     conn.executescript(sql_script)
     conn.commit()
@@ -216,6 +206,9 @@ def _raw(sql_script):
 
 def test_upgrade_adds_target_currency():
     section("Upgrading a database from before target currencies")
+    if helpers.on_postgres():
+        print("  skipped: the upgrade path is SQLite-only (Postgres starts from the current schema)")
+        return
     _raw("""
         CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
             target_price REAL, currency TEXT, created_at TEXT NOT NULL);

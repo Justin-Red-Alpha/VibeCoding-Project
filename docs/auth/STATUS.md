@@ -20,8 +20,10 @@ being held in memory.
 
 ## Needs work
 1. A "change password" form for signed-in users.
-2. Before any exposure beyond localhost: per-form CSRF tokens, HTTPS (the cookie
-   becomes `Secure` automatically on https), and a persistent throttle.
+2. Before a real launch (none planned; the Vercel site is a personal dev
+   deployment): per-form CSRF tokens and a persistent throttle. HTTPS is handled:
+   behind Vercel's proxy the cookie is `Secure` (checked in the image with
+   `X-Forwarded-Proto: https`). The throttle is per instance on Vercel.
 
 ## Coherence
 No law fails.

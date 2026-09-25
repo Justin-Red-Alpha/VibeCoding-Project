@@ -1,0 +1,13 @@
+# Keep the image to the app and its tests. Never ship local data or secrets.
+.venv/
+data/
+docs/
+openspec/
+.claude/
+.codex/
+graphify-out/
+.github/
+.git/
+.env
+**/__pycache__/
+**/*.pyc
