@@ -44,9 +44,10 @@
   Container Images setting is on. Don't "fix" a crash by pointing SQLite at
   `/tmp`: the site is public, the database would reset on every scale-down, and
   the next visitor to register would become admin. It's a
-  personal dev deployment; no launch is planned. **Trial in progress:** the owner
-  is trying Vercel's Git auto-deploy, so `vercel.json` stays uncommitted. Pushes
-  deploy ungated, with no daily cron, in the default region
-  ([delivery/STATUS.md](delivery/STATUS.md)).
+  personal dev deployment; no launch is planned. The first deploy (`a237b69`,
+  through Vercel's Git auto-deploy for one push) ran on Neon but as a plain
+  Python function, so search had no Chromium. The container needs Container
+  Images (Beta) access. The site sits behind Vercel Authentication. `vercel.json`
+  is now committed ([delivery/STATUS.md](delivery/STATUS.md)).
 - **Drift:** every `path:symbol` in the component maps resolves. Run
   `bash scripts/drift-check.sh` (CI runs it on every push).

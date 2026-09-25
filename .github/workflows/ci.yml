@@ -152,6 +152,10 @@ jobs:
       # Optional repository variable, e.g. https://<project>.vercel.app. Without
       # it the health check uses the deployment's own URL.
       PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+      # Optional. With Vercel Authentication on, every request is redirected to a
+      # Vercel sign-in page; this secret (Settings > Deployment Protection >
+      # Protection Bypass for Automation) lets the health check through.
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
     steps:
       - name: Deploy credentials present?
         id: creds
@@ -177,13 +181,18 @@ jobs:
         if: steps.creds.outputs.skip != 'true'
         run: |
           base="${PRODUCTION_URL:-${{ steps.deploy.outputs.url }}}"
+          bypass=()
+          if [ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
+            bypass=(-H "x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET")
+          fi
           for i in $(seq 1 24); do
-            code=$(curl -s -o /tmp/health -w '%{http_code}' "$base/healthz" || true)
+            code=$(curl -s "${bypass[@]}" -o /tmp/health -w '%{http_code}' "$base/healthz" || true)
             if [ "$code" = 200 ]; then echo "healthy: $(cat /tmp/health)"; exit 0; fi
-            if [ "$code" = 401 ] || [ "$code" = 403 ]; then
-              echo "::error::$base is behind Vercel's deployment protection ($code). Set the repository variable PRODUCTION_URL to the public production domain."
-              exit 1
-            fi
+            case "$code" in
+              30[1278]|401|403)
+                echo "::error::$base is behind Vercel's deployment protection ($code). Add the repository secret VERCEL_AUTOMATION_BYPASS_SECRET (Vercel: Settings > Deployment Protection > Protection Bypass for Automation)."
+                exit 1 ;;
+            esac
             sleep 5
           done
           echo "::error::$base/healthz never answered 200 (last: $code $(cat /tmp/health 2>/dev/null))"

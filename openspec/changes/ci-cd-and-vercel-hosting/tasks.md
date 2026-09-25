@@ -67,14 +67,14 @@
 
   Verify: push to main and all jobs go green, with deploy skipped and the notice visible in the log.
 - [ ] 4.4 Vendor `scripts/drift-check.sh` from the supercharge skill, with an upstream note in its header. Verify: `bash scripts/drift-check.sh` locally prints `0 dead`, and the same line appears in the CI log.
-- [ ] 4.5 Add `vercel.json`:
+- [x] 4.5 Add `vercel.json`:
   - `git.deploymentEnabled: false`;
   - `regions: ["sin1"]`;
   - `crons: [{ "path": "/cron/daily", "schedule": "0 18 * * *" }]` (02:00 SGT).
 
   Verify: a JSON-schema check (`$schema` https://openapi.vercel.sh/vercel.json) accepts it, and the cron schedule is daily (Hobby-valid).
 
-  **Held back (owner, 2026-09-25).** The file is written and passes the schema check, but it's left uncommitted so the owner can try Vercel's Git auto-deploy first. Until it's committed: every push to `main` deploys whether CI passes or not, there's no daily cron (`crons` lives only here), and the region is Vercel's default rather than `sin1`. Done when it (or a version without the `git` block) is committed.
+  Held back for one push (`a237b69`, owner, 2026-09-25) to try Vercel's Git auto-deploy, then committed the same day.
 
 ## 5. Docs (supercharge reconcile)
 

@@ -191,10 +191,7 @@ deployment; no launch is planned.
   `Dockerfile.vercel` (the same file Vercel builds). Only then does a push to
   `main` deploy (`vercel deploy --prod`), and only if `VERCEL_TOKEN` exists
   (otherwise it's skipped with a notice). `vercel.json` turns Vercel's Git
-  auto-deploy off, so nothing bypasses the gate. **Exception, for now:** the
-  owner is trying Vercel's Git auto-deploy, so `vercel.json` is written but
-  **uncommitted**. Pushes deploy ungated, there's no cron, and the region is the
-  default. Don't commit `vercel.json` or set `VERCEL_TOKEN` without asking.
+  auto-deploy off, so nothing bypasses the gate.
 - `GET /healthz` returns `{"app","database"}` with 200 or 503, and never the
   backend, host or URL.
 
@@ -296,6 +293,18 @@ into a thread.
 **Behind Vercel's proxy, `host` may be an internal name.** Hence the
 forwarded-host rule above. Which header Vercel actually fills is confirmed at the
 first deploy; record the answer here.
+
+**Vercel may quietly build the plain Python runtime instead of the container.**
+Vercel's Container Images feature is a permissioned beta. Without it, a repo with
+`Dockerfile.vercel` still deploys, as a Python function with no Chromium. The
+site works, but search fails with "Executable doesn't exist at
+/home/sbx_user…/ms-playwright/…". Seen on the first deploy (`a237b69`). Check the
+build log before debugging the app.
+
+**The Vercel site is behind Vercel Authentication.** Every URL, the production
+alias included, 302s to `vercel.com/sso-api`, so curl sees a redirect rather
+than your app. Use the Protection Bypass for Automation secret
+(`x-vercel-protection-bypass` header) or a signed-in browser.
 
 **`/cron/daily` makes real requests.** Called against a database that holds
 listings, it fetches real shop pages and asks the Internet Archive. On 2026-09-25

@@ -88,6 +88,15 @@ graph LR
    day and 300 s per request. The daily run is budgeted to fit (refresh rule 7).
 9. **Close together.** Vercel region `sin1` with Neon in Singapore keeps the
    database round-trips short.
+10. **The container needs Vercel's Container Images (Beta) permission.** Without
+    it, Vercel builds the repo as a plain Python function: the app runs on Neon,
+    but there's no Chromium, so search reports that the browser can't start.
+    Seen on `a237b69`, the one push deployed by Vercel's Git auto-deploy while
+    the owner tried it (rule 1 was suspended for that push).
+11. **The site sits behind Deployment Protection** (Vercel Authentication): only
+    team members get past the sign-in redirect. Automation (`verify_prod`)
+    passes `x-vercel-protection-bypass` from the `VERCEL_AUTOMATION_BYPASS_SECRET`
+    repository secret.
 
 ## 7. Atoms owned (FRAMEWORK §4)
 **Trn**: `ci_test`, `ci_postgres`, `drift_check`, `build_image`, `smoke`,

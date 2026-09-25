@@ -362,13 +362,18 @@ push to `main` is deployed only after every test job passes. Vercel's own Git
 auto-deploy is switched off in `vercel.json`, so a failing test always blocks a
 deploy.
 
-> **Right now (2026-09-25) we're trying Vercel's Git auto-deploy instead.**
-> `vercel.json` isn't committed yet. Until it is:
-> - every push deploys whether or not the tests pass;
-> - there's no daily cron;
-> - the region is Vercel's default.
->
-> Leave `SCHEDULER_MODE` unset meanwhile, and skip `VERCEL_TOKEN`.
+Two things the first deploy taught (2026-09-25):
+
+- **The container needs Vercel's Container Images (Beta) access.** Without it,
+  Vercel builds the app as a plain Python function. The site works, but
+  searching shops fails with "Could not start Chromium … Executable doesn't
+  exist". The build log shows which one you got: a container build, or
+  `pip install`.
+- **The site is behind Vercel Authentication** (Settings → Deployment
+  Protection). Only members of your Vercel team can open it, which suits a dev
+  deployment. For the deploy job's health check, create a secret under
+  **Protection Bypass for Automation** and add it to GitHub as
+  `VERCEL_AUTOMATION_BYPASS_SECRET`.
 
 **One-time setup (the owner, in the Vercel and GitHub dashboards):**
 
@@ -391,6 +396,7 @@ deploy.
 | GitHub secret | `VERCEL_ORG_ID` | your Vercel ID (personal) or Team ID |
 | GitHub secret | `VERCEL_PROJECT_ID` | the project's Settings → General → Project ID |
 | GitHub variable (optional) | `PRODUCTION_URL` | e.g. `https://<project>.vercel.app`, for the post-deploy health check |
+| GitHub secret (optional) | `VERCEL_AUTOMATION_BYPASS_SECRET` | Vercel → Settings → Deployment Protection → Protection Bypass for Automation, so the health check gets past Vercel Authentication |
 
 Values are never written down in the repo. Until `VERCEL_TOKEN` exists, the
 deploy job is **skipped with a notice**, and CI stays green.

@@ -431,3 +431,23 @@ requirement.
   deployment protection answers 401/403.
 - **Pinned versions:** actions/checkout@v7, actions/setup-python@v7,
   actions/setup-node@v7, and `vercel@60.0.1`.
+- **Owner trial of Vercel's Git auto-deploy (one push, `a237b69`).** `vercel.json`
+  was left out of that commit and committed right after, so the gate, the cron
+  and `sin1` are back. What that first deploy showed:
+  - **Vercel built the plain Python runtime, not the container.** Playwright
+    looked for Chromium under `/home/sbx_user…/.cache/ms-playwright`, so search
+    reported that the browser couldn't start. Vercel's docs say
+    `Dockerfile.vercel` is detected automatically, but the feature is marked
+    "Permissions Required: Container Images (Beta)". The team needs that access,
+    and the Framework Preset must not force Python.
+  - **Storage on Neon works.** The app started, created the schema, and the
+    owner registered the admin account.
+  - **Deployment Protection (Vercel Authentication) is on.** Every URL, the
+    production alias included, redirects to `vercel.com/sso-api`. Automated
+    checks need the "Protection Bypass for Automation" secret
+    (`x-vercel-protection-bypass`); the deploy job sends it when the
+    `VERCEL_AUTOMATION_BYPASS_SECRET` repository secret is set. Whether Vercel
+    Cron gets through the protection isn't documented; check the first run in
+    the Cron Jobs logs.
+  - **Image size isn't a risk:** Vercel Container Registry allows 2 GB per
+    compressed layer and 15 GB per image, on Hobby too.
