@@ -188,7 +188,7 @@ deployment; no launch is planned.
   `x-forwarded-host` when present, else `host`.
 - **Delivery:** `.github/workflows/ci.yml` runs the seven suites on Ubuntu and
   Windows, again on Postgres 17, the drift check, and a smoke test of
-  `Dockerfile.vercel` (the same file Vercel builds). Only then does a push to
+  `Containerfile.vercel` (the same file Vercel builds). Only then does a push to
   `main` deploy (`vercel deploy --prod`), and only if `VERCEL_TOKEN` exists
   (otherwise it's skipped with a notice). `vercel.json` turns Vercel's Git
   auto-deploy off, so nothing bypasses the gate.
@@ -296,7 +296,7 @@ first deploy; record the answer here.
 
 **Vercel may quietly build the plain Python runtime instead of the container.**
 Vercel's Container Images feature is a permissioned beta. Without it, a repo with
-`Dockerfile.vercel` still deploys, as a Python function with no Chromium. The
+`Containerfile.vercel` still deploys, as a Python function with no Chromium. The
 site works, but search fails with "Executable doesn't exist at
 /home/sbx_user…/ms-playwright/…". Seen on the first deploy (`a237b69`). Check the
 build log before debugging the app.
@@ -413,7 +413,7 @@ Against Postgres, like CI's `postgres` job (Docker Desktop must be running):
 ```powershell
 docker run -d --name pt-pg -p 5433:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=test postgres:17
 $env:TEST_DATABASE_URL = "postgresql://postgres:postgres@localhost:5433/test"   # then any suite
-docker build -f Dockerfile.vercel -t price-tracker . ; docker run --rm -p 8080:80 price-tracker
+docker build -f Containerfile.vercel -t price-tracker . ; docker run --rm -p 8080:80 price-tracker
 ```
 
 Route tests need `requirements-dev.txt` (httpx).

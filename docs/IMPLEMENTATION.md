@@ -18,7 +18,7 @@
 | history | `app/history.py` | [history/ARCHITECTURE.md](history/ARCHITECTURE.md) | [history/IMPLEMENTATION.md](history/IMPLEMENTATION.md) |
 | auth | `app/auth.py`, `app/account.py`, `app/admin.py` (users) | [auth/ARCHITECTURE.md](auth/ARCHITECTURE.md) | [auth/IMPLEMENTATION.md](auth/IMPLEMENTATION.md) |
 | settings | `app/site_settings.py`, `app/admin.py` (settings, maintenance) | [settings/ARCHITECTURE.md](settings/ARCHITECTURE.md) | [settings/IMPLEMENTATION.md](settings/IMPLEMENTATION.md) |
-| delivery | `.github/workflows/`, `Dockerfile.vercel`, `vercel.json`, `scripts/`, `tests/helpers.py` | [delivery/ARCHITECTURE.md](delivery/ARCHITECTURE.md) | [delivery/IMPLEMENTATION.md](delivery/IMPLEMENTATION.md) |
+| delivery | `.github/workflows/`, `Containerfile.vercel`, `vercel.json`, `scripts/`, `tests/helpers.py` | [delivery/ARCHITECTURE.md](delivery/ARCHITECTURE.md) | [delivery/IMPLEMENTATION.md](delivery/IMPLEMENTATION.md) |
 
 ## Shared objects (one Dat, DataLocs in ≥2 components)
 | Object | Authoritative at | Also read by | Realised at |

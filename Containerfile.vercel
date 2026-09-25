@@ -1,5 +1,5 @@
 # One image for CI and for hosting. Vercel (Container Images) builds this file
-# from the repo; CI builds it with `docker build -f Dockerfile.vercel .` and
+# from the repo; CI builds it with `docker build -f Containerfile.vercel .` and
 # smoke-tests it, so what's tested is what's hosted.
 # Why it looks like this: openspec/changes/ci-cd-and-vercel-hosting/design.md, D2.
 FROM python:3.14-slim-bookworm

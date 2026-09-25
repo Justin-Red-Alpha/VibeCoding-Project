@@ -36,11 +36,11 @@
 - **External limits:** the Internet Archive blocks clients that ignore HTTP 429,
   for an hour and doubling on repeat. `history` stops on the first sign and
   pauses. Don't hand-probe web.archive.org in loops.
-- **Hosting (2026-09-25):** the storage port, `Dockerfile.vercel`,
+- **Hosting (2026-09-25):** the storage port, `Containerfile.vercel`,
   `vercel.json` (auto-deploy off, `sin1`, daily cron) and the CI workflow are
   built. Before this change, Vercel built each push as a plain Python function
   and it crashed at startup (`500 FUNCTION_INVOCATION_FAILED`, read-only
-  filesystem). Vercel builds `Dockerfile.vercel` only once the project's
+  filesystem). Vercel builds `Containerfile.vercel` only once the project's
   Container Images setting is on. Don't "fix" a crash by pointing SQLite at
   `/tmp`: the site is public, the database would reset on every scale-down, and
   the next visitor to register would become admin. It's a

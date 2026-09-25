@@ -1,13 +1,13 @@
 # Delivery — implementation map
 
 > The functor ARCHITECTURE.md → code. Keep it in sync **with** the code (§6.3).
-> Bare file names (`Dockerfile.vercel`, `vercel.json`) are cited in prose because
+> Bare file names (`Containerfile.vercel`, `vercel.json`) are cited in prose because
 > the drift check skips references without a directory.
 
 ## Objects (Dat) → code
 | Object | Form / shape | Realised at | State |
 | --- | --- | --- | --- |
-| `Image` | `Dockerfile.vercel`: python:3.14-slim-bookworm, Chromium headless shell, non-root `app`, `CMD uvicorn … --proxy-headers` | `Dockerfile.vercel` (bare name) | built |
+| `Image` | `Containerfile.vercel`: python:3.14-slim-bookworm, Chromium headless shell, non-root `app`, `CMD uvicorn … --proxy-headers` | `Containerfile.vercel` (bare name) | built |
 | build context | excludes `.venv`, `data/`, `docs/`, `openspec/`, `.claude/`, `.codex/`, `graphify-out/`, `.env` | `.dockerignore` (bare name) | built |
 | host config | no Git auto-deploy, region `sin1`, daily cron | `vercel.json` (bare name) | built |
 | runtime deps (pinned) | playwright 1.63.0, psycopg[binary] 3.3.6, psycopg-pool 3.3.3 | `requirements.txt` (bare name) | built |
@@ -36,8 +36,8 @@
 | 1. no Git auto-deploy | `vercel.json` (`git.deploymentEnabled: false`) | Vercel JSON schema check (task 4.5) |
 | 2. skipped with a notice without credentials | `.github/workflows/ci.yml:Deploy` | the first push to `main` |
 | 3. tests never touch the hosted database | `tests/helpers.py:check_test_database_url` | `tests/test_hosting.py:test_test_database_guard` |
-| 4. one recipe; no data or secrets in the image | `.dockerignore`, `Dockerfile.vercel` | local `docker run … ls` (2026-09-25) and the `container` job |
-| 4. forwarded headers trusted (Secure cookie) | `Dockerfile.vercel` (`--proxy-headers`) | local: `X-Forwarded-Proto: https` → `Secure` (2026-09-25) |
+| 4. one recipe; no data or secrets in the image | `.dockerignore`, `Containerfile.vercel` | local `docker run … ls` (2026-09-25) and the `container` job |
+| 4. forwarded headers trusted (Secure cookie) | `Containerfile.vercel` (`--proxy-headers`) | local: `X-Forwarded-Proto: https` → `Secure` (2026-09-25) |
 | 5. secrets never logged | `app/database.py:_redact` | `tests/test_hosting.py:test_healthz` |
 | 6. one step per suite | `.github/workflows/ci.yml:test_hosting` | actionlint 1.7.12 (clean) |
 | 7. drift check in CI | `.github/workflows/ci.yml:drift` | the first push to `main` |

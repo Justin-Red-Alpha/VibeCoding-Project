@@ -3,7 +3,7 @@
 #
 #   test       the suites on Ubuntu and Windows (SQLite), plus the docs drift check
 #   postgres   the same suites against a real Postgres 17, the engine production uses
-#   container  builds Dockerfile.vercel (what Vercel runs) and smoke-tests it
+#   container  builds Containerfile.vercel (what Vercel runs) and smoke-tests it
 #   deploy     main only, after all three: Vercel production via the CLI
 #
 # Vercel's own Git auto-deploy is off (vercel.json), so a red build never ships.
@@ -116,8 +116,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Build Dockerfile.vercel
-        run: docker build -f Dockerfile.vercel -t price-tracker:ci .
+      - name: Build Containerfile.vercel
+        run: docker build -f Containerfile.vercel -t price-tracker:ci .
       - name: Start it
         run: docker run -d --name app -p 8080:80 price-tracker:ci
       - name: /healthz answers 200

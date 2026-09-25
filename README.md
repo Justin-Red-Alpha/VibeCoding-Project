@@ -150,11 +150,11 @@ again.
 
 ### Or run it in Docker
 
-The same image the hosted site runs (`Dockerfile.vercel`: Python 3.14, Chromium,
+The same image the hosted site runs (`Containerfile.vercel`: Python 3.14, Chromium,
 a non-root user):
 
 ```powershell
-docker build -f Dockerfile.vercel -t price-tracker .
+docker build -f Containerfile.vercel -t price-tracker .
 docker run --rm -p 8080:80 price-tracker
 ```
 
@@ -378,7 +378,7 @@ Two things the first deploy taught (2026-09-25):
 **One-time setup (the owner, in the Vercel and GitHub dashboards):**
 
 1. In the Vercel project, turn on **Container Images** (it builds
-   `Dockerfile.vercel`). `vercel.json` pins the region to `sin1` (Singapore).
+   `Containerfile.vercel`). `vercel.json` pins the region to `sin1` (Singapore).
 2. Install **Neon** from the Vercel Marketplace (Singapore if offered, Postgres
    17, preview branching off). It adds `DATABASE_URL` to the project by itself.
 3. Add the Vercel environment variables below, for **Production**.
@@ -440,7 +440,7 @@ app/
   static/         CSS
 tests/            Fixture-based tests (helpers.py picks SQLite or TEST_DATABASE_URL)
 data/app.db       SQLite (created on first run)
-Dockerfile.vercel The one image: CI smoke-tests it, Vercel runs it
+Containerfile.vercel   The one image: CI smoke-tests it, Vercel runs it
 vercel.json       Region, daily cron, Git auto-deploy off
 .github/workflows/ci.yml   Tests on Ubuntu, Windows and Postgres; container smoke test; gated deploy
 scripts/drift-check.sh     Docs ↔ code check (vendored from the supercharge skill)

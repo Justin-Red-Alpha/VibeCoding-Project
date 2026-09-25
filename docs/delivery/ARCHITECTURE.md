@@ -2,14 +2,14 @@
 
 > Model-first (FRAMEWORK §2/§4). Intended specification for this component. The
 > code realises it (see IMPLEMENTATION.md). Source of record:
-> `.github/workflows/ci.yml`, `Dockerfile.vercel`, `vercel.json`.
+> `.github/workflows/ci.yml`, `Containerfile.vercel`, `vercel.json`.
 
 ## 1. Overview
 How a commit becomes the running site. GitHub Actions checks every push to `main`
 and every pull request: the suites on two operating systems and on Postgres, the
 docs drift check, and a smoke test of the container image. Only a fully green
 push to `main` is deployed to Vercel production. Vercel runs the same
-`Dockerfile.vercel` as a container Function, next to a Neon Postgres database,
+`Containerfile.vercel` as a container Function, next to a Neon Postgres database,
 and calls `/cron/daily` once a day.
 
 ## 2. Why
@@ -55,7 +55,7 @@ graph LR
 | `ci_test` | `Commit × OS → CheckResult` ⊸ | Total | byte-compile, then each suite as its own step on SQLite, on Ubuntu and Windows |
 | `ci_postgres` | `Commit → CheckResult` ⊸ | Total | the same suites against a `postgres:17` service container (`TEST_DATABASE_URL`) |
 | `drift_check` | `Docs × Code → CheckResult` | Total | every `path:symbol` in an IMPLEMENTATION.md resolves (vendored script) |
-| `build_image` | `Commit → Image` ⊸ | Total | `Dockerfile.vercel`. Placed twice: the CI runner and Vercel's builder |
+| `build_image` | `Commit → Image` ⊸ | Total | `Containerfile.vercel`. Placed twice: the CI runner and Vercel's builder |
 | `smoke` | `Image → CheckResult` ⊸ | Total | `/healthz` 200, `/login` 200, and Chromium renders inside the image |
 | `deploy?` | `Commit → Deployment` ⊸ | Partial | defined iff push to `main` ∧ `ci_test`, `ci_postgres`, `smoke` all pass ∧ credentials present |
 | `credentials?` | `Repo → DeployCredentials` | Partial | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`. Absent → the deploy is **skipped with a notice**, never a failure or a success |
@@ -72,7 +72,7 @@ graph LR
    Postgres job gets only the service container's URL, and `tests/helpers.py`
    refuses any host but `localhost`/`127.0.0.1` and any URL equal to
    `DATABASE_URL` before it drops anything.
-4. **One recipe, two builders.** CI and Vercel both build `Dockerfile.vercel`
+4. **One recipe, two builders.** CI and Vercel both build `Containerfile.vercel`
    from the same commit. The image runs as a non-root user, carries no `data/`
    contents and no `.env` (`.dockerignore`), and trusts forwarded headers
    (`--proxy-headers`), since Vercel's proxy is the only way in.
@@ -107,7 +107,7 @@ graph LR
 | --- | --- |
 | `GitHubRunner` | an Actions VM (ubuntu-latest, windows-latest) |
 | `CiPostgres` | the `postgres:17` service container beside the Ubuntu runner |
-| `VercelBuild` | Vercel's builder, which builds `Dockerfile.vercel` |
+| `VercelBuild` | Vercel's builder, which builds `Containerfile.vercel` |
 | `VercelInstance` | a container Function running `ServerProc` (2 GB, 1 vCPU, scales to zero after 5 idle minutes, 300 s per request) |
 | `VercelEdge` | Vercel's HTTPS proxy in front of every instance |
 | `VercelCron` | Vercel's scheduler |

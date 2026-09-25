@@ -5,7 +5,7 @@
 > relation, and runs the §4.5 coherence checklist against the code. Detail lives in
 > the linked component docs. Source of record: `app/main.py` (entry points),
 > `app/database.py` (schema and the storage port), `app/adapters.py` (shop
-> knowledge), `.github/workflows/ci.yml` + `Dockerfile.vercel` + `vercel.json`
+> knowledge), `.github/workflows/ci.yml` + `Containerfile.vercel` + `vercel.json`
 > (delivery).
 >
 > Method: `~/.claude/skills/supercharge/FRAMEWORK.md`. `CLAUDE.md` holds the eight
