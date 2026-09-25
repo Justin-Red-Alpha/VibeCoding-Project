@@ -9,5 +9,15 @@
       "path": "/cron/daily",
       "schedule": "0 18 * * *"
     }
+  ],
+  "services": {
+    "web": {
+      "root": ".",
+      "runtime": "container",
+      "entrypoint": "Containerfile.vercel"
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": { "service": "web" } }
   ]
 }
