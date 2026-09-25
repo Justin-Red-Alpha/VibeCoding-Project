@@ -59,14 +59,14 @@
   - add `requirements-dev.txt` (`httpx`).
 
   Verify: a fresh venv installed from both files runs all six suites.
-- [ ] 4.3 Add `.github/workflows/ci.yml`, run on push to main and on pull requests, with four jobs:
+- [x] 4.3 Add `.github/workflows/ci.yml`, run on push to main and on pull requests, with four jobs:
   - `test`: ubuntu + windows, Python 3.14. Install, `playwright install --with-deps chromium`, `compileall`, the six suites as separate steps, and the drift check on ubuntu;
   - `postgres`: ubuntu, a `postgres:17` service with a health check, `TEST_DATABASE_URL` set to it, and the six suites as separate steps;
   - `container`: build, `/healthz`, `/login`, and in-image `tests.test_shop_search`;
   - `deploy`: main pushes only, after the other three; skip with a notice when `VERCEL_TOKEN` is empty, otherwise `vercel deploy --prod` (pinned CLI) and curl production `/healthz`.
 
   Verify: push to main and all jobs go green, with deploy skipped and the notice visible in the log.
-- [ ] 4.4 Vendor `scripts/drift-check.sh` from the supercharge skill, with an upstream note in its header. Verify: `bash scripts/drift-check.sh` locally prints `0 dead`, and the same line appears in the CI log.
+- [x] 4.4 Vendor `scripts/drift-check.sh` from the supercharge skill, with an upstream note in its header. Verify: `bash scripts/drift-check.sh` locally prints `0 dead`, and the same line appears in the CI log.
 - [x] 4.5 Add `vercel.json`:
   - `git.deploymentEnabled: false`;
   - `regions: ["sin1"]`;
